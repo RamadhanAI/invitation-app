@@ -1,0 +1,15 @@
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+
+  <!-- ✅ Add these -->
+  <key>NSCameraUsageDescription</key>
+  <string>We use the camera for QR code check-ins.</string>
+  <!-- ✅ End addition -->
+
+  <key>CFBundleDisplayName</key>
+  <string>Invitation App</string>
+  <!-- …rest unchanged… -->
+</dict>
+</plist>

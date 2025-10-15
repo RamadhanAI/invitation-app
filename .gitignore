@@ -1,0 +1,56 @@
+# Node/Next.js
+node_modules/
+.next/
+out/
+dist/
+*.log
+.vercel/
+.eslintcache
+*.tsbuildinfo
+
+# Env (keep only example)
+.env
+.env.*
+!.env.example
+
+# iOS
+build/
+DerivedData/
+Pods/
+*.xcworkspace
+xcuserdata/
+
+# Android
+*.apk
+*.aab
+*.dex
+*.class
+.gradle/
+build/
+local.properties
+.cxx/
+.externalNativeBuild/
+
+# OS/IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Archives / big binaries
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+*.bz2
+*.iso
+*.dmg
+
+# Media (use Git LFS if you must)
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.mov

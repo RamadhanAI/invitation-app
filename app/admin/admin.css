@@ -1,0 +1,469 @@
+/* app/admin/admin.css */
+/* app/admin/admin.css */
+/* ───────── Tokens (light) ───────── */
+:root {
+    --brand-primary: #111827;
+    --brand-secondary: #F59E0B;
+    --brand-button: #111827;
+    --bg: #ffffff;
+    --fg: #111827;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --card: #ffffff;
+    --card-2: #f9fafb;
+    --accent: #1D4ED8;
+    /* headerBlue maps here */
+    --ok: #059669;
+    --warn: #F59E0B;
+    --crit: #DC2626;
+    --shadow: 0 10px 30px rgba(17, 24, 39, .08);
+}
+
+/* ───────── Dark overrides ───────── */
+.admin-dark {
+    --bg: #0e1117;
+    --fg: #ecf0f6;
+    --muted: #b6c2d2;
+    --line: rgba(236, 240, 246, .18);
+    --card: #161b24;
+    --card-2: #121722;
+    --accent: #7aa2ff;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --crit: #f87171;
+    --shadow: 0 16px 40px rgba(0, 0, 0, .45);
+}
+
+/* ───────── Shell & Header ───────── */
+.admin-shell {
+    min-height: 100dvh;
+    background: linear-gradient(135deg, #0f0f13 0%, #121623 40%, #151a2e 100%);
+    color: #e7e9ee;
+}
+
+.admin-shell::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: .18;
+    background-image:
+        radial-gradient(900px 600px at 10% 5%, rgba(124, 58, 237, .18), transparent 60%),
+        radial-gradient(900px 600px at 85% 10%, rgba(59, 130, 246, .16), transparent 60%),
+        radial-gradient(1000px 700px at 50% 100%, rgba(250, 204, 21, .10), transparent 60%);
+    mix-blend-mode: screen;
+}
+
+.admin-dark .admin-shell {
+    background: linear-gradient(135deg, #0b0b0f 0%, #0e1320 100%);
+}
+
+.admin-header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    padding: .75rem 1rem;
+    backdrop-filter: saturate(130%) blur(8px);
+    background: linear-gradient(135deg,
+            color-mix(in oklab, var(--brand-primary) 85%, transparent),
+            color-mix(in oklab, var(--accent) 78%, transparent));
+    border-bottom: 1px solid rgba(255, 255, 255, .12);
+}
+
+.admin-header__left,
+.admin-header__right {
+    display: flex;
+    align-items: center;
+    gap: .5rem
+}
+
+.admin-header__left {
+    gap: .75rem
+}
+
+.admin-brand {
+    font-weight: 600;
+    letter-spacing: .2px;
+    color: #fff
+}
+
+.admin-nav .a-btn {
+    padding: .4rem .65rem
+}
+
+/* ───────── Full-width main & container neutralizers ───────── */
+.admin-main {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 16px clamp(12px, 2vw, 24px) !important
+}
+
+.admin-main .a-container,
+.admin-main .container,
+.admin-main .container-page {
+    max-width: none !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding-left: clamp(12px, 2vw, 24px) !important;
+    padding-right: clamp(12px, 2vw, 24px) !important;
+}
+
+.admin-main [class*="max-w-"] {
+    max-width: none !important
+}
+
+.a-bleed {
+    position: relative;
+    width: 100vw;
+    left: 50%;
+    right: 50%;
+    margin-left: -50vw;
+    margin-right: -50vw;
+    padding-left: clamp(12px, 2vw, 24px);
+    padding-right: clamp(12px, 2vw, 24px);
+}
+
+/* ───────── Cards ───────── */
+.a-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow)
+}
+
+.a-card--soft {
+    background: var(--card-2)
+}
+
+/* ───────── Water shimmer ───────── */
+@keyframes water-shimmer {
+    0% {
+        transform: translateX(-120%) skewX(-12deg);
+        opacity: 0
+    }
+
+    10% {
+        opacity: .45
+    }
+
+    50% {
+        opacity: .35
+    }
+
+    90% {
+        opacity: .45
+    }
+
+    100% {
+        transform: translateX(120%) skewX(-12deg);
+        opacity: 0
+    }
+}
+
+.banana-sheen-hover,
+.banana-card {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate
+}
+
+.banana-card {
+    background: var(--card) !important;
+    border: 1px solid var(--line)
+}
+
+.banana-sheen-hover::after,
+.banana-card::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -40%;
+    width: 26%;
+    height: 100%;
+    pointer-events: none;
+    mix-blend-mode: soft-light;
+    filter: blur(1.2px);
+    background: linear-gradient(115deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, .12) 40%, rgba(255, 255, 255, .25) 50%, rgba(255, 255, 255, .12) 60%, rgba(255, 255, 255, 0) 100%);
+    animation: water-shimmer 5.8s linear infinite;
+}
+
+.banana-sheen-hover:hover::after,
+.banana-card:hover::after {
+    animation-duration: 6.6s;
+    opacity: .85
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .banana-sheen-hover::after,
+    .banana-card::after {
+        animation: none;
+        opacity: 0
+    }
+}
+
+/* ───────── Buttons ───────── */
+.a-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .5rem;
+    font-weight: 600;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    background: transparent;
+    color: var(--fg);
+    padding: .65rem 1rem;
+    transition: all .18s ease;
+    text-decoration: none;
+}
+
+.a-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 16px rgba(17, 24, 39, .08)
+}
+
+.a-btn:active {
+    transform: translateY(0)
+}
+
+.a-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px
+}
+
+.a-btn[disabled] {
+    opacity: .55;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none
+}
+
+.a-btn--primary {
+    background: linear-gradient(135deg, var(--brand-secondary), var(--accent));
+    color: #fff;
+    border-color: transparent;
+}
+
+.a-btn--accent {
+    background: var(--brand-secondary);
+    color: #111827;
+    border-color: transparent
+}
+
+.a-btn--ghost {
+    background: transparent;
+    color: var(--fg)
+}
+
+.a-btn--strong {
+    color: #f3f5fb !important;
+    border-color: rgba(255, 255, 255, .28) !important;
+    background: rgba(255, 255, 255, .06) !important
+}
+
+.a-btn--strong:hover {
+    background: rgba(255, 255, 255, .12) !important
+}
+
+/* ───────── Inputs ───────── */
+.a-input {
+    width: 100%;
+    min-height: 44px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--fg);
+    padding: .55rem .75rem;
+    outline: none;
+    transition: border-color .18s, box-shadow .18s;
+}
+
+.a-input::placeholder {
+    color: var(--muted)
+}
+
+.a-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 25%, transparent)
+}
+
+.admin-dark .a-input {
+    background: #0f1318;
+    color: #e5e7eb
+}
+
+/* ───────── Table base ───────── */
+.a-table {
+    width: 100%;
+    font-size: .925rem;
+    border-collapse: separate;
+    border-spacing: 0
+}
+
+.a-th,
+.a-td {
+    padding: 8px 10px;
+    border-top: 1px solid var(--line);
+    color: var(--fg)
+}
+
+.a-th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: #f8fafc;
+    color: #1f2937;
+    border-bottom: 1px solid rgba(0, 0, 0, .08);
+    font-weight: 600;
+    text-align: left;
+}
+
+.admin-dark .a-th {
+    background: #121826;
+    color: #e5e7eb;
+    border-bottom: 1px solid rgba(255, 255, 255, .18)
+}
+
+.a-tr:nth-child(even) .a-td {
+    background: color-mix(in oklab, var(--card) 88%, #fff 12%)
+}
+
+.admin-dark .a-tr:nth-child(even) .a-td {
+    background: rgba(255, 255, 255, .035)
+}
+
+.a-table-wrap {
+    max-height: 75vh;
+    overflow: auto
+}
+
+/* Dense / tight */
+.a-table--dense .a-th,
+.a-table--dense .a-td {
+    padding: 6px 8px
+}
+
+.a-table--tight {
+    table-layout: auto;
+    border-collapse: collapse
+}
+
+.a-table--tight .cell-ellipsis {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 18ch
+}
+
+.a-table--tight .cell-wrap {
+    white-space: normal
+}
+
+/* Natural widths */
+.a-col-name,
+.a-col-email,
+.a-col-attended,
+.a-col-datetime,
+.a-col-actions {
+    width: auto !important
+}
+
+/* ↓↓↓ IMPORTANT: base width for generic Actions */
+.a-col-actions {
+    min-width: 12rem
+}
+
+@media (min-width:1280px) {
+    .a-col-actions {
+        min-width: 14rem
+    }
+}
+
+@media (min-width:1536px) {
+    .a-col-actions {
+        min-width: 16rem
+    }
+}
+
+/* Keep Actions horizontal & neat */
+.a-table tbody td:last-child {
+    white-space: nowrap
+}
+
+.a-table tbody td:last-child>.flex {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .5rem;
+    justify-content: flex-start
+}
+
+.a-table tr>td:last-child .a-btn,
+.a-table tr>td:last-child .a-btn.a-btn--ghost {
+    padding: .4rem .6rem;
+    font-size: .82rem;
+    line-height: 1.1rem
+}
+
+.a-table tr>td:last-child .a-btn+.a-btn,
+.a-table tr>td:last-child .a-btn+a,
+.a-table tr>td:last-child a+.a-btn {
+    margin-left: .25rem
+}
+
+/* ───────── Wide table helper (opt-in) ───────── */
+.a-table--wide {
+    min-width: 1280px
+}
+
+@media (min-width:1280px) {
+    .a-table--wide {
+        min-width: 1800px
+    }
+}
+
+@media (min-width:1536px) {
+    .a-table--wide {
+        min-width: 2200px
+    }
+}
+
+.a-table--wide .a-col-actions {
+    min-width: 24rem
+}
+
+@media (min-width:1280px) {
+    .a-table--wide .a-col-actions {
+        min-width: 28rem
+    }
+}
+
+@media (min-width:1536px) {
+    .a-table--wide .a-col-actions {
+        min-width: 34rem
+    }
+}
+
+/* Ensure action buttons stay visible and accessible */
+.a-table-wrap {
+    overflow-x: auto
+}
+
+/* ───────── A11y ───────── */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 1px, 1px);
+    white-space: nowrap;
+    border: 0;
+}

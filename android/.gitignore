@@ -1,0 +1,119 @@
+############################
+# Node / Next.js
+############################
+node_modules/
+.next/
+out/
+dist/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.cache/
+
+# Lockfiles — keep ONE; ignore the others
+# If you use pnpm, keep pnpm-lock.yaml and ignore the rest:
+# yarn.lock
+# package-lock.json
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# TypeScript
+*.tsbuildinfo
+
+# Next images / misc
+.vercel/
+.eslintcache
+
+############################
+# iOS
+############################
+# Xcode
+build/
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.xcuserstate
+
+# CocoaPods
+Pods/
+*.xcworkspace
+
+# Swift Package Manager
+.swiftpm/
+.build/
+
+############################
+# Android  (from your template + a few extras)
+############################
+*.apk
+*.aar
+*.ap_
+*.aab
+*.dex
+*.class
+bin/
+gen/
+out/
+.gradle/
+build/
+local.properties
+proguard/
+.navigation/
+captures/
+*.iml
+.idea/
+.externalNativeBuild/
+.cxx/
+freeline.py
+freeline/
+freeline_project_description.json
+vcs.xml
+lint/intermediates/
+lint/generated/
+lint/outputs/
+lint/tmp/
+*.hprof
+capacitor-cordova-android-plugins
+app/src/main/assets/public
+app/src/main/assets/capacitor.config.json
+app/src/main/assets/capacitor.plugins.json
+app/src/main/res/xml/config.xml
+
+############################
+# OS / Editor
+############################
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+############################
+# Archives / large binaries
+############################
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+*.bz2
+*.iso
+*.dmg
+
+# Common binary/media (use Git LFS if you must keep them)
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.mov

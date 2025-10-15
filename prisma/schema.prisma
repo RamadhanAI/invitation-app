@@ -1,0 +1,126 @@
+// prisma/schema.prisma
+// ────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // pooled (:6543) for runtime
+  directUrl = env("DIRECT_URL") // direct (:5432) for prisma CLI
+}
+
+model Organizer {
+  id        String          @id @default(uuid())
+  name      String
+  email     String          @unique
+  apiKey    String          @unique
+  brand     Json?
+  createdAt DateTime        @default(now())
+  events    Event[]
+  users     OrganizerUser[]
+}
+
+model OrganizerUser {
+  id          String    @id @default(uuid())
+  organizerId String
+  email       String
+  role        String    @default("admin") // admin|editor|scanner
+  createdAt   DateTime  @default(now())
+  organizer   Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+
+  @@unique([organizerId, email])
+}
+
+model EventTemplate {
+  id          String   @id @default(uuid())
+  name        String   @unique(map: "EventTemplate_name_key") // keep existing DB constraint
+  description String?
+  defaults    Json
+  createdAt   DateTime @default(now())
+}
+
+model Event {
+  id            String         @id @default(uuid())
+  slug          String         @unique
+  title         String
+  date          DateTime
+  price         Int
+  description   String?
+  venue         String?
+  capacity      Int?
+  currency      String         @default("USD")
+  status        String         @default("published")
+  createdAt     DateTime       @default(now())
+  organizerId   String?
+  organizer     Organizer?     @relation(fields: [organizerId], references: [id], onDelete: SetNull)
+  registrations Registration[]
+  payments      Payment[]
+  stations      Station[] // per-event scanner stations
+
+  @@index([organizerId])
+}
+
+// NEW: Physical/virtual scanning station.
+// Each device logs in once (code + secret); server stamps scans with Station.name.
+model Station {
+  id         String   @id @default(uuid())   // stored as TEXT string
+  eventId    String
+  name       String
+  code       String
+  secretHash String
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, code], name: "station_event_code")
+  @@index([eventId])
+}
+
+model Registration {
+  id           String    @id @default(uuid())
+  eventId      String
+  email        String
+  price        Int
+  paid         Boolean   @default(false)
+  qrToken      String    @unique
+  registeredAt DateTime  @default(now())
+  attended     Boolean   @default(false)
+  scannedAt    DateTime?
+  scannedBy    String?
+
+  // explicit check-out tracking
+  checkedOutAt DateTime?
+  checkedOutBy String?
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  meta  Json?
+
+  @@unique([eventId, email], name: "eventId_email")
+  @@unique([eventId, qrToken], name: "eventId_qrToken")
+  @@index([eventId])
+  @@index([eventId, registeredAt])
+  @@index([eventId, attended])
+  @@index([eventId, scannedBy])
+  @@index([eventId, checkedOutBy])
+}
+
+model Payment {
+  id        String   @id @default(uuid())
+  eventId   String
+  email     String
+  amount    Int
+  currency  String   @default("USD")
+  provider  String   @default("stripe")
+  status    String   @default("pending")
+  sessionId String?  @unique
+  chargeId  String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, status])
+}
