@@ -20,6 +20,8 @@
         "@capacitor/ios": "7.4.3",
         "@prisma/client": "4.16.0",
         "@sendgrid/mail": "^7.7.0",
+        "@upstash/ratelimit": "^2.0.6",
+        "@upstash/redis": "^1.35.6",
         "@zxing/browser": "^0.1.5",
         "autoprefixer": "10.4.12",
         "framer-motion": "^12.23.12",
