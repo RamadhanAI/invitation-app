@@ -1,9 +1,8 @@
 // lib/auth.ts
-// lib/auth.ts
 import crypto from 'crypto';
 import { cookies } from 'next/headers';
-import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/db';
+import { verifySecret } from '@/lib/password';
 
 /**
  * Admin: env-based today (ADMIN_USER / ADMIN_PASS)
@@ -121,7 +120,6 @@ export async function authenticateAdmin(identifier: string, password: string) {
 }
 
 // ── scanners: Station (DB) or env key ────────────────────────────────────────
-// 1) Per-station login against your Station table (recommended)
 export async function authenticateStationScanner(input: { code: string; secret: string; eventId?: string }) {
   const where: any = { code: input.code, active: true };
   if (input.eventId) where.eventId = input.eventId;
@@ -133,11 +131,10 @@ export async function authenticateStationScanner(input: { code: string; secret: 
   if (!station) return { ok: false as const, error: 'Invalid code' };
 
   const hash = station.secretHash || '';
-  let ok = false;
-  if (hash.startsWith('$2')) {
-    ok = await bcrypt.compare(input.secret, hash);       // bcrypt hash (preferred)
-  } else {
-    ok = safeEqual(input.secret, hash);                  // plaintext fallback
+  let ok = await verifySecret(input.secret, hash); // scrypt + bcrypt fallback
+  // If you still have any plaintext rows (not recommended), allow one-time success:
+  if (!ok && !hash.startsWith('scrypt$') && !hash.startsWith('$2')) {
+    ok = safeEqual(input.secret, hash);
   }
   if (!ok) return { ok: false as const, error: 'Invalid secret' };
 

@@ -1,14 +1,13 @@
 // app/api/scanner/session/route.ts
-// app/api/scanner/session/route.ts
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/db';
 import { signSession, verifySession } from '@/lib/session';
+import { verifySecret } from '@/lib/password';
 
 const COOKIE_NAME = 'scan_sess';
-
-export const runtime = 'nodejs';
 
 export async function GET() {
   const token = cookies().get(COOKIE_NAME)?.value;
@@ -58,7 +57,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: 'Invalid station or inactive' }, { status: 401 });
   }
 
-  const ok = await bcrypt.compare(String(secret), station.secretHash);
+  // Verify using scrypt (with bcrypt fallback inside verifySecret)
+  const ok = await verifySecret(String(secret), station.secretHash);
   if (!ok) return NextResponse.json({ ok: false, error: 'Invalid credentials' }, { status: 401 });
 
   const value = signSession({ stationId: station.id, eventId: event.id, iat: Date.now() });
