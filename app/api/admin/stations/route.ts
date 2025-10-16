@@ -1,4 +1,6 @@
 // app/api/admin/stations/route.ts  (POST: create station)
+export const runtime = 'nodejs';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import bcrypt from 'bcryptjs';
