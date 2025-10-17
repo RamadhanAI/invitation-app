@@ -4,7 +4,7 @@ export const runtime = 'nodejs';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { headers } from 'next/headers';
-import crypto from 'crypto';
+import * as crypto from 'node:crypto';
 import { hashSecret } from '@/lib/password';
 
 const ok  = (data: any) => NextResponse.json({ ok: true, ...data });
@@ -33,7 +33,7 @@ export async function GET(_: Request, { params }: { params: { slug: string } }) 
     select: { id: true, name: true, code: true, createdAt: true, updatedAt: true, active: true },
   });
 
-  const rows = stations.map(s => ({
+  const rows = stations.map((s: { id: any; name: any; code: any; createdAt: any; }) => ({
     id: s.id,
     name: s.name,
     code: s.code,
@@ -63,9 +63,9 @@ export async function POST(req: Request, { params }: { params: { slug: string } 
       select: { code: true },
     });
     const nums = existing
-      .map(s => s.code.match(/^S(\d+)$/)?.[1])
+      .map((s: { code: { match: (arg0: RegExp) => any[]; }; }) => s.code.match(/^S(\d+)$/)?.[1])
       .filter(Boolean)
-      .map(n => parseInt(n!, 10));
+      .map((n: string) => parseInt(n!, 10));
     const next = nums.length ? Math.max(...nums) + 1 : 1;
     code = `S${next}`;
   }

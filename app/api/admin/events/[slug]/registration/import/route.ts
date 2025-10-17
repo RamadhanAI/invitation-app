@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { cookies } from 'next/headers';
 import Papa from 'papaparse';
-import crypto from 'crypto';
+import * as crypto from 'node:crypto';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -125,7 +125,7 @@ export async function POST(req: Request, { params }: { params: { slug: string } 
     where: { eventId: event.id, email: { in: uniqueRows.map(r => r.email) } },
     select: { id: true, email: true },
   });
-  const existingEmails = new Set(existing.map(x => x.email));
+  const existingEmails = new Set(existing.map((x: { email: any; }) => x.email));
 
   const toCreate = uniqueRows.filter(r => !existingEmails.has(r.email));
   const toUpdate = uniqueRows.filter(r => existingEmails.has(r.email));
@@ -158,7 +158,7 @@ export async function POST(req: Request, { params }: { params: { slug: string } 
   // update meta for existing (chunked)
   let updated = 0;
   if (toUpdate.length) {
-    const existingByEmail = new Map(existing.map(e => [e.email, e.id]));
+    const existingByEmail = new Map(existing.map((e: { email: any; id: any; }) => [e.email, e.id]));
     const CHUNK = 250;
     for (let i = 0; i < toUpdate.length; i += CHUNK) {
       const part = toUpdate.slice(i, i + CHUNK);

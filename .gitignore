@@ -54,3 +54,14 @@ local.properties
 *.gif
 *.mp4
 *.mov
+
+*.zip
+android.zip
+ios.zip
+app.zip
+components.zip
+lib.zip
+prisma.zip
+public.zip
+scripts.zip
+types.zip

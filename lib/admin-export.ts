@@ -1,6 +1,6 @@
 // lib/admin-export.ts
 import { prisma } from '@/lib/db';
-import crypto from 'crypto';
+import * as crypto from 'node:crypto';
 
 const ADMIN_COOKIE = 'inv_admin';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'change-me';

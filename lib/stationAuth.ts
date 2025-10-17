@@ -1,18 +1,17 @@
 // lib/stationAuth.ts
-import crypto from 'crypto';
+import * as crypto from 'node:crypto';
 import { cookies } from 'next/headers';
 import { prisma } from '@/lib/db';
-import bcrypt from 'bcryptjs';
+import { verifySecret } from '@/lib/password';
 
 const COOKIE = 'station';
 const SECRET = (process.env.SCANNER_SECRET || process.env.ADMIN_KEY || 'dev-secret').trim();
 
 // Tiny HMAC-signed token (no extra deps)
 function sign(payload: object, expSec = 3600 * 24 * 7) {
-  const data = { ...payload, exp: Math.floor(Date.now()/1000) + expSec };
-  const json = JSON.stringify(data);
-  const b64 = Buffer.from(json).toString('base64url');
-  const sig = crypto.createHmac('sha256', SECRET).update(b64).digest('base64url');
+  const data = { ...payload, exp: Math.floor(Date.now() / 1000) + expSec };
+  const b64  = Buffer.from(JSON.stringify(data)).toString('base64url');
+  const sig  = crypto.createHmac('sha256', SECRET).update(b64).digest('base64url');
   return `${b64}.${sig}`;
 }
 function verify(token?: string): null | any {
@@ -22,7 +21,7 @@ function verify(token?: string): null | any {
   const good = crypto.createHmac('sha256', SECRET).update(b64).digest('base64url');
   if (good !== sig) return null;
   const data = JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'));
-  if (data.exp && data.exp < Math.floor(Date.now()/1000)) return null;
+  if (data.exp && data.exp < Math.floor(Date.now() / 1000)) return null;
   return data;
 }
 
@@ -66,7 +65,7 @@ export async function verifyStationLogin(eventSlug: string, code: string, secret
   });
   if (!station || !station.active) throw new Error('Invalid station');
 
-  const ok = await bcrypt.compare(secret, station.secretHash);
+  const ok = await verifySecret(secret, station.secretHash);
   if (!ok) throw new Error('Invalid station');
   return station;
 }

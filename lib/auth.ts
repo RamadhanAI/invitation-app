@@ -1,5 +1,5 @@
 // lib/auth.ts
-import crypto from 'crypto';
+import * as crypto from 'node:crypto';
 import { cookies } from 'next/headers';
 import { prisma } from '@/lib/db';
 import { verifySecret } from '@/lib/password';

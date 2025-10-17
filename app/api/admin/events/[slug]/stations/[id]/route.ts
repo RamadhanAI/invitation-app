@@ -4,7 +4,7 @@ export const runtime = 'nodejs';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { headers } from 'next/headers';
-import crypto from 'crypto';
+import * as crypto from 'node:crypto';
 import { hashSecret } from '@/lib/password';
 
 const ok  = (data: any) => NextResponse.json({ ok: true, ...data });

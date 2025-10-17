@@ -1,51 +1,85 @@
 // lib/password.ts
-import { scryptSync, randomBytes, timingSafeEqual, type ScryptOptions } from "crypto";
+import * as crypto from 'node:crypto';
 
-// scrypt params
-const N = 16384;
+
+// Scheme tag (lets you rotate later if needed)
+const ALG = 'scrypt2';
+
+// scrypt params (server-friendly)
+const N = 1 << 15; // 32768
 const r = 8;
 const p = 1;
-const KEYLEN = 64; // bytes
+const KEYLEN = 32;  // bytes
+const SALT_LEN = 16;
 
-// Convert Buffer → Uint8Array view (TS-friendly for timingSafeEqual)
-function toView(buf: Buffer): Uint8Array {
+// Make a Uint8Array view from a Buffer (no copies)
+function u8(buf: Buffer): Uint8Array {
   return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 }
 
-/** Hash secret with scrypt.
- * Stored format:  scrypt$N$r$p$base64(salt)$hex(derived)
- */
-export function hashSecret(secret: string) {
-  const saltB64 = randomBytes(16).toString("base64");   // use string salt (BinaryLike OK)
-  const opts: ScryptOptions = { N, r, p };
-  const derived = scryptSync(secret, saltB64, KEYLEN, opts); // Buffer
-  return `scrypt$${N}$${r}$${p}$${saltB64}$${derived.toString("hex")}`;
+// Base64url encode/decode helpers for Uint8Array
+function b64urlEncode(u: Uint8Array): string {
+  return Buffer.from(u.buffer, u.byteOffset, u.byteLength).toString('base64url');
+}
+function b64urlDecode(s: string): Uint8Array {
+  const b = Buffer.from(s, 'base64url');
+  return u8(b);
 }
 
-/** Verify secret against stored hash.
- * Accepts legacy bcrypt hashes ($2…) for backward compatibility.
+// Promise wrapper for crypto.scrypt that returns Uint8Array
+function scryptU8(password: string, salt: Uint8Array, keylen = KEYLEN): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, keylen, { N, r, p }, (err, dk) => {
+      if (err) return reject(err);
+      resolve(u8(dk as Buffer));
+    });
+  });
+}
+
+/**
+ * Hash a secret with scrypt and return a compact string:
+ *   "scrypt2$<base64url(version||salt||derived)>"
+ * where version is 1 byte = 0x01
  */
-export async function verifySecret(secret: string, stored: string) {
-  // Legacy bcrypt support (lazy import only if needed)
-  if (stored.startsWith("$2")) {
-    const { default: bcrypt } = await import("bcryptjs");
-    return bcrypt.compare(secret, stored);
+export async function hashSecret(secret: string): Promise<string> {
+  const saltBuf = crypto.randomBytes(SALT_LEN); // Buffer from Node
+  const salt = u8(saltBuf);                     // Uint8Array view
+
+  const derived = await scryptU8(secret, salt, KEYLEN); // Uint8Array
+
+  // Build payload as Uint8Array only (no Buffer APIs)
+  const out = new Uint8Array(1 + SALT_LEN + KEYLEN);
+  out[0] = 1; // version
+  out.set(salt, 1);
+  out.set(derived, 1 + SALT_LEN);
+
+  return `${ALG}$${b64urlEncode(out)}`;
+}
+
+/**
+ * Verify a secret; returns true/false.
+ * Only accepts hashes produced by this module (prefix "scrypt2$").
+ */
+export async function verifySecret(secret: string, stored?: string | null): Promise<boolean> {
+  if (!stored || !stored.startsWith(`${ALG}$`)) return false;
+
+  const payload = stored.slice(ALG.length + 1); // after "scrypt2$"
+  let bytes: Uint8Array;
+  try {
+    bytes = b64urlDecode(payload); // Uint8Array
+  } catch {
+    return false;
   }
 
-  // scrypt$N$r$p$saltB64$derivedHex
-  const parts = stored.split("$");
-  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+  if (bytes.length !== 1 + SALT_LEN + KEYLEN) return false;
+  if (bytes[0] !== 1) return false; // version
 
-  const n = Number(parts[1]);
-  const rr = Number(parts[2]);
-  const pp = Number(parts[3]);
-  const saltB64 = parts[4];
-  const expected = Buffer.from(parts[5], "hex");
+  const salt = bytes.subarray(1, 1 + SALT_LEN);                     // Uint8Array
+  const expected = bytes.subarray(1 + SALT_LEN, 1 + SALT_LEN + KEYLEN);
 
-  const opts: ScryptOptions = { N: n, r: rr, p: pp };
-  const derived = scryptSync(secret, saltB64, expected.length, opts); // Buffer
+  const derived = await scryptU8(secret, salt, KEYLEN);             // Uint8Array
 
-  // TS-safe constant-time compare
-  if (derived.length !== expected.length) return false;
-  return timingSafeEqual(toView(derived), toView(expected));
+  if (derived.byteLength !== expected.byteLength) return false;
+  // timingSafeEqual accepts ArrayBufferView; Uint8Array is perfect
+  return crypto.timingSafeEqual(derived, expected);
 }
