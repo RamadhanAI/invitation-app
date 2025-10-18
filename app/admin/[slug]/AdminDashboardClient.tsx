@@ -135,7 +135,7 @@ export default function AdminDashboardClient({
     setSelected((prev) => { const n = { ...prev }; filtered.forEach((r) => (n[r.qrToken] = v)); return n; });
   const toggleOne = (t: string) => setSelected((p) => ({ ...p, [t]: !p[t] }));
 
-  async function bulkPatch(body: { tokens?: string[]; attended?: boolean; checkedOut?: boolean }) {
+  async function bulkPatch(body: { tokens?: string[]; attended?: boolean; checkedOut?: boolean }): Promise<void> {
     if (!someSelected) return;
     setPending(true);
     try {
