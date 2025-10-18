@@ -152,7 +152,7 @@ export default function AdminDashboardClient({
     finally { setPending(false); }
   }
 
-  async function patchOne(token: string, next: Partial<Pick<Registration, 'attended'>> & { checkedOut?: boolean }) {
+  async function patchOne(token: string, next: Partial<Pick<Registration, 'attended'>> & { checkedOut?: boolean }): Promise<void> {
     setPending(true);
     try {
       const res = await fetch(`/api/admin/events/${encodeURIComponent(slug)}/registration`, {
@@ -171,7 +171,7 @@ export default function AdminDashboardClient({
   const importUrlBase = `/api/admin/events/${encodeURIComponent(slug)}/registration/import`;
   const importUrl = PUBLIC_ADMIN_KEY ? `${importUrlBase}${ADMIN_AUTH_QS}` : importUrlBase;
 
-  async function onCsvPicked(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onCsvPicked(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = e.currentTarget.files?.[0];
     if (!file) return;
     setPending(true);
