@@ -1,9 +1,11 @@
 // app/api/admin/events/[slug]/stations/[id]/route.ts
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { headers } from 'next/headers';
-import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
+import * as crypto from 'node:crypto';
+import { hashSecret } from '@/lib/password';
 
 const ok  = (data: any) => NextResponse.json({ ok: true, ...data });
 const bad = (msg: string, code = 400) => NextResponse.json({ error: msg }, { status: code });
@@ -32,13 +34,16 @@ export async function PATCH(req: Request, { params }: { params: { slug: string; 
   };
 
   // Ensure station belongs to this event
-  const st = await prisma.station.findUnique({ where: { id: params.id }, select: { id: true, eventId: true } });
+  const st = await prisma.station.findUnique({
+    where: { id: params.id },
+    select: { id: true, eventId: true },
+  });
   if (!st || st.eventId !== event.id) return bad('Not found', 404);
 
   // Rotate secret
   if (body?.rotateSecret) {
     const secret = crypto.randomBytes(24).toString('base64url');
-    const secretHash = await bcrypt.hash(secret, 10);
+    const secretHash = await hashSecret(secret); // scrypt
     await prisma.station.update({ where: { id: st.id }, data: { secretHash } });
     return ok({ secret }); // plaintext once
   }
@@ -60,9 +65,12 @@ export async function DELETE(_: Request, { params }: { params: { slug: string; i
   if (!event || !pass) return bad('Unauthorized', 401);
 
   // Soft-delete (keep history)
-  const st = await prisma.station.findUnique({ where: { id: params.id }, select: { id: true, eventId: true } });
+  const st = await prisma.station.findUnique({
+    where: { id: params.id },
+    select: { id: true, eventId: true },
+  });
   if (!st || st.eventId !== event.id) return bad('Not found', 404);
-  await prisma.station.update({ where: { id: st.id }, data: { active: false } });
 
+  await prisma.station.update({ where: { id: st.id }, data: { active: false } });
   return ok({ deleted: true });
 }

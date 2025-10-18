@@ -1,6 +1,6 @@
 // app/api/auth/login/route.ts
 import { NextResponse } from 'next/server';
-import crypto from 'crypto';
+import * as crypto from 'node:crypto';
 
 const ADMIN_COOKIE = 'inv_admin';
 const DEFAULT_TTL = 60 * 60 * 12;

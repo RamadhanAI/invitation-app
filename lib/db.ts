@@ -1,10 +1,12 @@
 // lib/db.ts
-// lib/db.ts (filled helpers; preserves your pooler-first logic)
-import { PrismaClient } from '@prisma/client';
+// Robust import that works even if the editor hasn't picked up generated types yet
+import type { PrismaClient as PrismaClientType } from '@prisma/client';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { PrismaClient } = require('@prisma/client') as typeof import('@prisma/client');
 
 let loggedOnce = false;
 
-// Local JSON type (avoids Prisma JsonValue differences across versions)
+// Local JSON type
 type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | { [k: string]: JsonValue } | JsonValue[];
 
@@ -36,17 +38,13 @@ function resolveDbUrl(): string | undefined {
 
     if (!loggedOnce && process.env.NODE_ENV !== 'production') {
       console.log(`[DB] Using ${host}:${port}${u.search || ''}`);
-      if (!isPooler) {
-        console.warn('[DB] WARNING: DATABASE_URL is not a Supabase pooler host. Use the pooler for app runtime.');
-      }
+      if (!isPooler) console.warn('[DB] WARNING: DATABASE_URL is not a Supabase pooler host.');
       if (isPooler && params.get('pgbouncer') !== 'true') {
         console.warn('[DB] WARNING: Pooler URL without ?pgbouncer=true — add it so Prisma disables prepared statements.');
       }
       loggedOnce = true;
     }
-  } catch {
-    // ignore parse errors
-  }
+  } catch { /* ignore */ }
   return url;
 }
 
@@ -59,16 +57,13 @@ const prismaClientSingleton = () =>
 
 declare global {
   // eslint-disable-next-line no-var
-  var __prisma: PrismaClient | undefined;
+  var __prisma: PrismaClientType | undefined;
 }
 
-// Export hot-reload safe client
-export const prisma: PrismaClient = globalThis.__prisma ?? prismaClientSingleton();
+export const prisma: PrismaClientType = globalThis.__prisma ?? prismaClientSingleton();
 if (process.env.NODE_ENV !== 'production') globalThis.__prisma = prisma;
 
-// =============================
-// Helper types
-// =============================
+// ===== helper types
 export type AttendanceSummary = { total: number; attended: number; noShows: number };
 export type RegistrationLite = {
   id: string;
@@ -83,9 +78,7 @@ export type RegistrationLite = {
   meta: JsonValue | null;
 };
 
-// =============================
-// Implementations
-// =============================
+// ===== helper fns
 export async function getRegistrations(eventId: string): Promise<RegistrationLite[]> {
   return prisma.registration.findMany({
     where: { eventId },
@@ -112,18 +105,14 @@ export async function getAttendance(eventId: string): Promise<AttendanceSummary>
 }
 
 export async function markAttendanceByToken(qrToken: string) {
-  // qrToken is globally unique in your schema
-  const now = new Date();
   return prisma.registration.update({
     where: { qrToken },
-    data: { attended: true, scannedAt: now },
+    data: { attended: true, scannedAt: new Date() },
   });
 }
 
 export async function getEventBySlug(slug: string) {
-  return prisma.event.findUnique({
-    where: { slug },
-  });
+  return prisma.event.findUnique({ where: { slug } });
 }
 
 export async function pingDb() {

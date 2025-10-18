@@ -1,5 +1,6 @@
-import bcrypt from 'bcryptjs';
-import { prisma } from '../lib/db';
+// scripts/seed-station.ts
+import { prisma } from '@/lib/db';
+import { hashSecret } from '@/lib/password';
 
 async function main() {
   const slug   = process.argv[2];
@@ -15,6 +16,8 @@ async function main() {
   const event = await prisma.event.findUnique({ where: { slug } });
   if (!event) throw new Error(`Event not found for slug: ${slug}`);
 
+  const secretHash = await hashSecret(secret);
+
   const station = await prisma.station.upsert({
     where: { station_event_code: { eventId: event.id, code } },
     update: { name },
@@ -22,7 +25,8 @@ async function main() {
       eventId: event.id,
       name,
       code,
-      secretHash: await bcrypt.hash(secret, 10),
+      secretHash,
+      active: true,
     },
   });
 

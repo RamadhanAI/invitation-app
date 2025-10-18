@@ -10,7 +10,11 @@
         "db:push": "npx prisma db push",
         "db:seed": "npx prisma db seed",
         "db:reset": "npm run db:push && npm run db:seed",
+        "migrate:deploy": "prisma migrate deploy",
         "postinstall": "prisma generate || true"
+    },
+    "engines": {
+        "node": "20.x"
     },
     "dependencies": {
         "@babel/runtime": "^7.28.2",
@@ -18,8 +22,11 @@
         "@capacitor/cli": "7.4.3",
         "@capacitor/core": "7.4.3",
         "@capacitor/ios": "7.4.3",
-        "@prisma/client": "4.16.0",
+        "@prisma/client": "^4.16.0",
         "@sendgrid/mail": "^7.7.0",
+        "@tailwindcss/forms": "^0.5.10",
+        "@upstash/ratelimit": "^2.0.6",
+        "@upstash/redis": "^1.35.6",
         "@zxing/browser": "^0.1.5",
         "autoprefixer": "10.4.12",
         "framer-motion": "^12.23.12",
@@ -39,19 +46,17 @@
         "zod": "^4.0.17"
     },
     "devDependencies": {
-        "@tailwindcss/forms": "^0.5.7",
         "@types/jsonwebtoken": "^9.0.10",
-        "@types/node": "^18.16.1",
+        "@types/node": "^20.19.21",
         "@types/papaparse": "^5.3.16",
         "@types/pg": "8.6.6",
         "@types/qrcode": "^1.5.5",
-        "@types/react": "^19.1.9",
-        "@types/react-dom": "^19.1.7",
-        "bcryptjs": "^3.0.2",
+        "@types/react": "^18.2.0",
+        "@types/react-dom": "^18.2.0",
         "dotenv": "^17.2.1",
         "eslint": "8.30.0",
         "eslint-config-next": "13.5.2",
-        "prisma": "4.16.0",
+        "prisma": "^4.16.0",
         "ts-node": "10.9.1",
         "tsx": "^4.20.4",
         "typescript": "5.1.3"

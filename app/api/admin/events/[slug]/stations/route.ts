@@ -1,9 +1,11 @@
 // app/api/admin/events/[slug]/stations/route.ts
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { headers } from 'next/headers';
-import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
+import * as crypto from 'node:crypto';
+import { hashSecret } from '@/lib/password';
 
 const ok  = (data: any) => NextResponse.json({ ok: true, ...data });
 const bad = (msg: string, code = 400) => NextResponse.json({ error: msg }, { status: code });
@@ -31,16 +33,13 @@ export async function GET(_: Request, { params }: { params: { slug: string } }) 
     select: { id: true, name: true, code: true, createdAt: true, updatedAt: true, active: true },
   });
 
-  // Provide a UI-friendly row
-  const rows = stations.map(s => ({
+  const rows = stations.map((s: { id: any; name: any; code: any; createdAt: any; }) => ({
     id: s.id,
     name: s.name,
     code: s.code,
     createdAt: s.createdAt,
-    // you don't track last-used; show nothing
-    lastUsedAt: null as string | null,
-    // show code; secret is never returned here
-    apiKeyMasked: `code: ${s.code}`,
+    lastUsedAt: null as string | null,   // (not tracked)
+    apiKeyMasked: `code: ${s.code}`,     // never return secret
   }));
 
   return ok({ stations: rows });
@@ -64,16 +63,16 @@ export async function POST(req: Request, { params }: { params: { slug: string } 
       select: { code: true },
     });
     const nums = existing
-      .map(s => (s.code.match(/^S(\d+)$/)?.[1]))
+      .map((s: { code: { match: (arg0: RegExp) => any[]; }; }) => s.code.match(/^S(\d+)$/)?.[1])
       .filter(Boolean)
-      .map(n => parseInt(n!, 10));
-    const next = (nums.length ? Math.max(...nums) + 1 : 1);
+      .map((n: string) => parseInt(n!, 10));
+    const next = nums.length ? Math.max(...nums) + 1 : 1;
     code = `S${next}`;
   }
 
-  // Create a random secret and store its hash
+  // Create a random secret and store its hash (scrypt)
   const secret = crypto.randomBytes(24).toString('base64url');
-  const secretHash = await bcrypt.hash(secret, 10);
+  const secretHash = await hashSecret(secret);
 
   const station = await prisma.station.create({
     data: { eventId: event.id, name, code, secretHash, active: true },
