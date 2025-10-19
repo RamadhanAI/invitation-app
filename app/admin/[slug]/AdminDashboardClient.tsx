@@ -58,7 +58,6 @@ async function ensureAdminSession(explicitKey?: string): Promise<boolean> {
   }
 }
 
-/* ---------- Animated counters ---------- */
 function CountUp({ value }: { value: number }): JSX.Element {
   const mv = useMotionValue(0);
   const fmt = useTransform(mv, (v: number) => Math.round(v).toLocaleString());
@@ -71,33 +70,6 @@ function CountUp({ value }: { value: number }): JSX.Element {
   return <span className="kpi__value">{text}</span>;
 }
 
-/* ---------- (optional) mini chart ---------- */
-function AreaChart({ data, w = 520, h = 140 }: { data: number[]; w?: number; h?: number }): JSX.Element {
-  const pad = 10;
-  const max = Math.max(...data, 1);
-  const step = (w - pad * 2) / Math.max(1, data.length - 1);
-  const pts = data.map((y, i) => [pad + i * step, h - pad - (y / max) * (h - pad * 2)] as const);
-  const d = pts.map(([x, y], i) => `${i ? 'L' : 'M'} ${x} ${y}`).join(' ');
-  const poly = `${d} L ${w - pad} ${h - pad} L ${pad} ${h - pad} Z`;
-  return (
-    <svg width={w} height={h} role="img" aria-label="Check-ins (last 24h)">
-      <defs>
-        <linearGradient id="admGrad" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="#111827" stopOpacity=".25" />
-          <stop offset="100%" stopColor="#111827" stopOpacity=".04" />
-        </linearGradient>
-      </defs>
-      <rect width={w} height={h} rx={14} fill="#fff" />
-      <AnimatePresence>
-        <motion.path key="fill" d={poly} fill="url(#admGrad)" initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
-        <motion.path key="stroke" d={d} fill="none" stroke="#111827" strokeWidth={2.4} strokeLinecap="round"
-          initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1 }} />
-      </AnimatePresence>
-    </svg>
-  );
-}
-
-/* ---------- Component ---------- */
 export default function AdminDashboardClient({
   slug, title, attendance, initialRegistrations,
 }: {
@@ -137,10 +109,10 @@ export default function AdminDashboardClient({
   const toggleAllVisible = (v: boolean): void =>
     setSelected((prev) => { const n: Record<string, boolean> = { ...prev }; filtered.forEach((r) => (n[r.qrToken] = v)); return n; });
 
-<<<<<<< Updated upstream
-  const bulkPatch = async (
-    body: { tokens?: string[]; attended?: boolean; checkedOut?: boolean }
-  ): Promise<void> => {
+  const toggleOne = (t: string): void =>
+    setSelected((p) => ({ ...p, [t]: !p[t] }));
+
+  const bulkPatch: (body: { tokens?: string[]; attended?: boolean; checkedOut?: boolean }) => Promise<void> = async (body) => {
     const attempt = async (): Promise<void> => {
       if (!someSelected) return;
       setPending(true);
@@ -172,11 +144,10 @@ export default function AdminDashboardClient({
     await attempt();
   };
 
-  const patchOne = async (
+  async function patchOne(
     token: string,
     next: Partial<Pick<Registration, 'attended'>> & { checkedOut?: boolean }
-  ): Promise<void> => {
->>>>>>> Stashed changes
+  ): Promise<void> {
     setPending(true);
     try {
       const res = await fetch(`/api/admin/events/${encodeURIComponent(slug)}/registration`, {
@@ -194,16 +165,12 @@ export default function AdminDashboardClient({
     } finally {
       setPending(false);
     }
-  };
+  }
 
   const importUrlBase = `/api/admin/events/${encodeURIComponent(slug)}/registration/import`;
   const importUrl = PUBLIC_ADMIN_KEY ? `${importUrlBase}${ADMIN_AUTH_QS}` : importUrlBase;
 
-<<<<<<< Updated upstream
-  async function onCsvPicked(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
-=======
   const onCsvPicked = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
->>>>>>> Stashed changes
     const file = e.currentTarget.files?.[0];
     if (!file) return;
     setPending(true);
