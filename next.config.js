@@ -29,7 +29,6 @@ const prodCsp = [
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
-    appDir: true,
     serverActions: true, // required for `use server`
   },
   // If you serve remote images, add domains or remotePatterns here

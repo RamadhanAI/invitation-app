@@ -1,4 +1,3 @@
-// app/api/admin/events/[slug]/stations/route.ts
 export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
@@ -7,7 +6,7 @@ import { headers } from 'next/headers';
 import * as crypto from 'node:crypto';
 import { hashSecret } from '@/lib/password';
 
-const ok  = (data: any) => NextResponse.json({ ok: true, ...data });
+const ok  = (data: Record<string, unknown> = {}) => NextResponse.json({ ok: true, ...data });
 const bad = (msg: string, code = 400) => NextResponse.json({ error: msg }, { status: code });
 
 async function gate(slug: string, apiKey?: string | null) {
@@ -21,7 +20,6 @@ async function gate(slug: string, apiKey?: string | null) {
   return { event, pass };
 }
 
-// List stations for this event
 export async function GET(_: Request, { params }: { params: { slug: string } }) {
   const apiKey = headers().get('x-api-key');
   const { event, pass } = await gate(params.slug, apiKey);
@@ -33,44 +31,45 @@ export async function GET(_: Request, { params }: { params: { slug: string } }) 
     select: { id: true, name: true, code: true, createdAt: true, updatedAt: true, active: true },
   });
 
-  const rows = stations.map((s: { id: any; name: any; code: any; createdAt: any; }) => ({
+  const rows = stations.map((s) => ({
     id: s.id,
     name: s.name,
     code: s.code,
     createdAt: s.createdAt,
-    lastUsedAt: null as string | null,   // (not tracked)
-    apiKeyMasked: `code: ${s.code}`,     // never return secret
+    lastUsedAt: null as string | null,
+    apiKeyMasked: `code: ${s.code}`,
   }));
 
   return ok({ stations: rows });
 }
 
-// Create a station (returns plaintext secret ONCE)
 export async function POST(req: Request, { params }: { params: { slug: string } }) {
   const apiKey = headers().get('x-api-key');
   const { event, pass } = await gate(params.slug, apiKey);
   if (!event || !pass) return bad('Unauthorized', 401);
 
-  const body = (await req.json().catch(() => null)) as { name?: string; code?: string };
+  const body = (await req.json().catch(() => null)) as { name?: string; code?: string } | null;
   const name = (body?.name ?? '').trim();
-  let   code = (body?.code ?? '').trim();
+  let code = (body?.code ?? '').trim();
   if (!name) return bad('Name required');
 
-  // Auto-generate a code if not provided (S1, S2, …)
   if (!code) {
     const existing = await prisma.station.findMany({
       where: { eventId: event.id },
       select: { code: true },
     });
+
     const nums = existing
-      .map((s: { code: { match: (arg0: RegExp) => any[]; }; }) => s.code.match(/^S(\d+)$/)?.[1])
-      .filter(Boolean)
-      .map((n: string) => parseInt(n!, 10));
+      .map((s: { code: string }) => {
+        const m = /^S(\d+)$/.exec(s.code ?? '');
+        return m ? Number(m[1]) : NaN;
+      })
+      .filter((n): n is number => Number.isFinite(n));
+
     const next = nums.length ? Math.max(...nums) + 1 : 1;
     code = `S${next}`;
   }
 
-  // Create a random secret and store its hash (scrypt)
   const secret = crypto.randomBytes(24).toString('base64url');
   const secretHash = await hashSecret(secret);
 
@@ -79,6 +78,5 @@ export async function POST(req: Request, { params }: { params: { slug: string } 
     select: { id: true, name: true, code: true, createdAt: true, updatedAt: true },
   });
 
-  // Return plaintext secret ONCE so admin can copy/share
   return ok({ station, secret });
 }
