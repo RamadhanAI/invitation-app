@@ -1,5 +1,4 @@
 // app/api/register/route.ts
-// app/api/register/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import * as crypto from 'node:crypto';
@@ -7,14 +6,34 @@ import * as crypto from 'node:crypto';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/* ---------- Optional dependency loaders (graceful fallbacks) ---------- */
-async function safeImport<T>(path: string): Promise<Partial<T> | null> {
-  try { return (await import(path)) as any; } catch { return null; }
+/* ---------- Static loader map (no dynamic import strings) ---------- */
+const loaders = {
+  rateLimit: () => import('@/lib/rateLimit'),
+  email: () => import('@/lib/email'),
+  tokens: () => import('@/lib/tokens'),
+  meta: () => import('@/lib/meta'),
+  ics: () => import('@/lib/ics'),
+} as const;
+
+async function tryLoad<K extends keyof typeof loaders>(
+  key: K
+): Promise<Awaited<ReturnType<(typeof loaders)[K]>> | null> {
+  try {
+    // @ts-expect-error - TS can’t perfectly infer Awaited here, but it’s fine for optional usage.
+    return await loaders[key]();
+  } catch {
+    return null;
+  }
 }
+
 const genToken = (bytes = 18) => crypto.randomBytes(bytes).toString('base64url');
 
-function ok(data: any, init: ResponseInit = {}) { return NextResponse.json({ ok: true, ...data }, init); }
-function err(status: number, message: string) { return NextResponse.json({ ok: false, error: message }, { status }); }
+function ok(data: any, init: ResponseInit = {}) {
+  return NextResponse.json({ ok: true, ...data }, init);
+}
+function err(status: number, message: string) {
+  return NextResponse.json({ ok: false, error: message }, { status });
+}
 
 function originFrom(req: Request) {
   const forwardedHost = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
@@ -33,13 +52,25 @@ async function verifyCaptchaIfEnabled(captchaToken: string | undefined, ip: stri
   try {
     if (hSecret) {
       const form = new URLSearchParams({ secret: hSecret, response: captchaToken, remoteip: ip });
-      const r = await fetch('https://hcaptcha.com/siteverify', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form.toString(), cache: 'no-store' });
-      const json = await r.json(); return json.success ? { ok: true } : { ok: false, error: 'Captcha failed' };
+      const r = await fetch('https://hcaptcha.com/siteverify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+        cache: 'no-store',
+      });
+      const json = await r.json();
+      return json.success ? { ok: true } : { ok: false, error: 'Captcha failed' };
     }
     if (gSecret) {
       const form = new URLSearchParams({ secret: gSecret, response: captchaToken, remoteip: ip });
-      const r = await fetch('https://www.google.com/recaptcha/api/siteverify', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form.toString(), cache: 'no-store' });
-      const json = await r.json(); return json.success ? { ok: true } : { ok: false, error: 'Captcha failed' };
+      const r = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+        cache: 'no-store',
+      });
+      const json = await r.json();
+      return json.success ? { ok: true } : { ok: false, error: 'Captcha failed' };
     }
   } catch {
     return { ok: false, error: 'Captcha verification error' };
@@ -55,16 +86,20 @@ function clientIp(req: Request) {
 /* ------------------------------ Route ------------------------------ */
 export async function POST(req: Request) {
   try {
-    // Load optional modules
-    const rate = await safeImport<{ rateLimit: Function; ipKey: Function }>('@/lib/rateLimit');
-    const email = await safeImport<{ sendRegistrationEmail: Function }>('@/lib/email');
-    const tokens = await safeImport<{ signTicket: Function; verifyTicket: Function }>('@/lib/tokens');
-    const metaUtil = await safeImport<{ normalizeMeta: (x: any) => any }>('@@/lib/meta').catch(() => null) || await safeImport<{ normalizeMeta: (x: any) => any }>('@/lib/meta');
-    const icsUtil = await safeImport<{ buildIcs: Function }>('@/lib/ics');
+    // Optional modules (loaded statically via map; failures tolerated)
+    const rate = await tryLoad('rateLimit'); // { rateLimit, ipKey } expected
+    const email = await tryLoad('email'); // { sendRegistrationEmail } expected
+    const tokens = await tryLoad('tokens'); // { signTicket, verifyTicket } expected
+    const metaUtil = await tryLoad('meta'); // { normalizeMeta } optional
+    const icsUtil = await tryLoad('ics'); // { buildIcs } optional
 
     // Rate limit (optional)
     if (rate?.rateLimit && rate?.ipKey) {
-      const rl = (rate.rateLimit as any)({ key: (rate.ipKey as any)(req, 'register'), limit: 5, windowMs: 60_000 });
+      const rl = (rate.rateLimit as any)({
+        key: (rate.ipKey as any)(req, 'register'),
+        limit: 5,
+        windowMs: 60_000,
+      });
       if (!rl.ok) return err(429, 'Too many attempts. Try again in a minute.');
     }
 
@@ -85,7 +120,14 @@ export async function POST(req: Request) {
     const event = await prisma.event.findUnique({
       where: { slug },
       select: {
-        id: true, slug: true, title: true, date: true, price: true, currency: true, venue: true, capacity: true,
+        id: true,
+        slug: true,
+        title: true,
+        date: true,
+        price: true,
+        currency: true,
+        venue: true,
+        capacity: true,
         organizer: { select: { brand: true } },
       },
     });
@@ -132,20 +174,32 @@ export async function POST(req: Request) {
     if (process.env.TICKET_JWT_SECRET && tokens?.signTicket && tokens?.verifyTicket) {
       const valid = (tokens.verifyTicket as any)(registration.qrToken);
       if (!valid) {
-        const jwtToken = (tokens.signTicket as any)({ sub: registration.id, eventId: event.id, email: registration.email });
-        await prisma.registration.update({ where: { id: registration.id }, data: { qrToken: jwtToken } });
+        const jwtToken = (tokens.signTicket as any)({
+          sub: registration.id,
+          eventId: event.id,
+          email: registration.email,
+        });
+        await prisma.registration.update({
+          where: { id: registration.id },
+          data: { qrToken: jwtToken },
+        });
         registration.qrToken = jwtToken;
       }
     }
 
     // Normalize meta for email template (optional util)
-    const normMeta = (metaUtil?.normalizeMeta as any)?.(registration.meta) ?? (registration.meta as any) ?? {};
-    const reqMeta  = (metaUtil?.normalizeMeta as any)?.(meta) ?? (meta as any) ?? {};
+    const normMeta =
+      (metaUtil?.normalizeMeta as any)?.(registration.meta) ?? (registration.meta as any) ?? {};
+    const reqMeta = (metaUtil?.normalizeMeta as any)?.(meta) ?? (meta as any) ?? {};
     const finalMeta = {
       firstName: normMeta.firstName ?? reqMeta.firstName,
-      lastName:  normMeta.lastName  ?? reqMeta.lastName,
-      jobTitle:  normMeta.jobTitle  ?? reqMeta.jobTitle,
-      companyName: normMeta.companyName ?? reqMeta.companyName ?? normMeta.company ?? reqMeta.company,
+      lastName: normMeta.lastName ?? reqMeta.lastName,
+      jobTitle: normMeta.jobTitle ?? reqMeta.jobTitle,
+      companyName:
+        normMeta.companyName ??
+        reqMeta.companyName ??
+        normMeta.company ??
+        reqMeta.company,
     };
 
     // ICS (fallback to minimal if helper missing)
@@ -159,20 +213,33 @@ export async function POST(req: Request) {
         url: `${originFrom(req)}/e/${event.slug}`,
       });
     } else {
-      const dt = new Date(event.date ?? Date.now()).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-      icsStr = `BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nSUMMARY:${event.title}\nDTSTART:${dt}\nURL:${originFrom(req)}/e/${event.slug}\nEND:VEVENT\nEND:VCALENDAR`;
+      const dt =
+        new Date(event.date ?? Date.now()).toISOString().replace(/[-:]/g, '').split('.')[0] +
+        'Z';
+      icsStr = `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+SUMMARY:${event.title}
+DTSTART:${dt}
+URL:${originFrom(req)}/e/${event.slug}
+END:VEVENT
+END:VCALENDAR`;
     }
-    const attachments = [{
-      content: Buffer.from(icsStr).toString('base64'),
-      filename: `${event.slug}.ics`,
-      type: 'text/calendar',
-      disposition: 'attachment',
-    }];
+    const attachments = [
+      {
+        content: Buffer.from(icsStr).toString('base64'),
+        filename: `${event.slug}.ics`,
+        type: 'text/calendar',
+        disposition: 'attachment',
+      },
+    ];
 
     // Email (optional)
     if (email?.sendRegistrationEmail) {
       const brand = (event.organizer?.brand ?? {}) as any;
-      const ticketUrl = `${originFrom(req)}/api/tickets/${encodeURIComponent(registration.qrToken)}`;
+      const ticketUrl = `${originFrom(req)}/api/tickets/${encodeURIComponent(
+        registration.qrToken
+      )}`;
       (email.sendRegistrationEmail as any)({
         to: registration.email,
         brand,
@@ -191,7 +258,9 @@ export async function POST(req: Request) {
       }).catch(() => {}); // never block on email failures
     }
 
-    const ticketUrl = `${originFrom(req)}/api/tickets/${encodeURIComponent(registration.qrToken)}`;
+    const ticketUrl = `${originFrom(req)}/api/tickets/${encodeURIComponent(
+      registration.qrToken
+    )}`;
     return ok({ registration: { ...registration, ticketUrl } });
   } catch (e) {
     console.error('[register] error:', e);

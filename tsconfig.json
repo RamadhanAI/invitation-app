@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "noImplicitAny": true,
     "target": "ESNext",
     "types": ["node"],  
     "lib": ["dom", "dom.iterable", "esnext"],
@@ -15,7 +16,6 @@
       "@components/*": ["components/*"],
       "@lib/*": ["lib/*"]
     },
-
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
