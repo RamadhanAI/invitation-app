@@ -138,29 +138,6 @@ export default function AdminDashboardClient({
     setSelected((prev) => { const n: Record<string, boolean> = { ...prev }; filtered.forEach((r) => (n[r.qrToken] = v)); return n; });
 
 <<<<<<< Updated upstream
-  async function bulkPatch(body: { tokens?: string[]; attended?: boolean; checkedOut?: boolean }): Promise<void> {
-    if (!someSelected) return;
-    setPending(true);
-    try {
-      const res = await fetch(`/api/admin/events/${encodeURIComponent(slug)}/registration/bulk`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json', ...ADMIN_AUTH_HEADER },
-        body: JSON.stringify({ ...body, station: 'Admin Bulk' }),
-      });
-      if (res.status === 401 && (await ensureAdminSession())) return await bulkPatch(body);
-      const json = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) throw new Error(json?.error ?? 'Bulk action failed');
-      const updated: Registration[] = json.rows ?? [];
-      setRows((prev) => prev.map((r) => { const u = updated.find((x) => x.qrToken === r.qrToken); return u ? { ...r, ...u } : r; }));
-    } catch (e) { console.error('bulkPatch error', e); }
-    finally { setPending(false); }
-  }
-
-  async function patchOne(token: string, next: Partial<Pick<Registration, 'attended'>> & { checkedOut?: boolean }): Promise<void> {
-=======
-  const toggleOne = (t: string): void =>
-    setSelected((p) => ({ ...p, [t]: !p[t] }));
-
-  // ---------- FIXED: explicit Promise<void> + inner attempt recursion ----------
   const bulkPatch = async (
     body: { tokens?: string[]; attended?: boolean; checkedOut?: boolean }
   ): Promise<void> => {
