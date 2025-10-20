@@ -88,10 +88,10 @@ export async function POST(req: Request) {
   try {
     // Optional modules (loaded statically via map; failures tolerated)
     const rate = await tryLoad('rateLimit'); // { rateLimit, ipKey } expected
-    const email = await tryLoad('email'); // { sendRegistrationEmail } expected
-    const tokens = await tryLoad('tokens'); // { signTicket, verifyTicket } expected
-    const metaUtil = await tryLoad('meta'); // { normalizeMeta } optional
-    const icsUtil = await tryLoad('ics'); // { buildIcs } optional
+    const email = await tryLoad('email');    // { sendRegistrationEmail } expected
+    const tokens = await tryLoad('tokens');  // { signTicket, verifyTicket } expected
+    const metaUtil = await tryLoad('meta');  // { normalizeMeta } optional
+    const icsUtil = await tryLoad('ics');    // { buildIcs } optional
 
     // Rate limit (optional)
     if (rate?.rateLimit && rate?.ipKey) {
@@ -162,7 +162,7 @@ export async function POST(req: Request) {
     } else if (meta && typeof meta === 'object') {
       // Merge any new meta keys on repeat submissions
       const existing = (registration.meta as any) || {};
-      const merged = { ...existing, ...(meta as any) };
+            const merged = { ...existing, ...(meta as any) };
       registration = await prisma.registration.update({
         where: { id: registration.id },
         data: { meta: merged },
@@ -202,7 +202,7 @@ export async function POST(req: Request) {
         reqMeta.company,
     };
 
-    // ICS (fallback to minimal if helper missing)
+    // Optional ICS attachment (we still let lib/email build one if you prefer)
     let icsStr = '';
     if (icsUtil?.buildIcs) {
       icsStr = (icsUtil.buildIcs as any)({
@@ -229,7 +229,7 @@ END:VCALENDAR`;
       {
         content: Buffer.from(icsStr).toString('base64'),
         filename: `${event.slug}.ics`,
-        type: 'text/calendar',
+        type: 'text/calendar; charset=utf-8; method=PUBLISH',
         disposition: 'attachment',
       },
     ];
@@ -237,9 +237,8 @@ END:VCALENDAR`;
     // Email (optional)
     if (email?.sendRegistrationEmail) {
       const brand = (event.organizer?.brand ?? {}) as any;
-      const ticketUrl = `${originFrom(req)}/api/tickets/${encodeURIComponent(
-        registration.qrToken
-      )}`;
+      const appOrigin = originFrom(req);
+
       (email.sendRegistrationEmail as any)({
         to: registration.email,
         brand,
@@ -253,8 +252,9 @@ END:VCALENDAR`;
         },
         token: registration.qrToken,
         meta: finalMeta,
+        // These are optional; lib/email will merge or ignore as needed
         attachments,
-        ticketUrl,
+        appUrl: appOrigin, // helps lib/email find /api/tickets/png
       }).catch(() => {}); // never block on email failures
     }
 
