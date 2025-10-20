@@ -50,7 +50,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
           'content-type': 'application/json',
           ...(ADMIN_KEY ? { 'x-api-key': ADMIN_KEY } : {}),
         },
-        body: JSON.stringify({ name: label }),
+        body: JSON.stringify({ name: label, label }), // send both keys; server accepts either
       }
     );
     const j = await r.json();
