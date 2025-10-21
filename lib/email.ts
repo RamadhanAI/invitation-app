@@ -1,11 +1,19 @@
 // lib/email.ts
-import { Resend } from 'resend';
 import QRCode from 'qrcode';
 import { prisma } from './db';
 import { normalizeMeta, type AttendeeMeta } from './meta';
 import { buildBadgeHTML, type Brand, type EventLite } from './emailTemplate';
 
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+// ───────── Lazy-load Resend to avoid build-time peer deps (@react-email/render) ─────────
+let _resend: any | null = null;
+async function getResend() {
+  const key = process.env.RESEND_API_KEY?.trim();
+  if (!key) return null;
+  if (_resend) return _resend;
+  const { Resend } = await import('resend');
+  _resend = new Resend(key);
+  return _resend;
+}
 
 /** Resolve the base URL for links and PNG fetches */
 function deriveBaseUrl(h?: Headers | HeadersInit): string {
@@ -82,8 +90,6 @@ type V2Args = {
 export async function sendRegistrationEmail(args: LegacyArgs): Promise<void>;
 export async function sendRegistrationEmail(args: V2Args): Promise<void>;
 export async function sendRegistrationEmail(args: LegacyArgs | V2Args): Promise<void> {
-  if (!resend) return; // Resend not configured → noop
-
   if ('eventId' in args) {
     // Legacy path: load event + brand + attendee meta
     const event = await prisma.event.findUnique({
@@ -210,7 +216,10 @@ async function sendEmailInternal(opts: {
   // Resend expects a single string: "Name <email@domain>"
   const from = (process.env.EMAIL_FROM?.trim() || 'Invitation App <tickets@triggerdxb.com>');
 
-  const { error } = await resend!.emails.send({
+  const resend = await getResend();
+  if (!resend) return; // not configured → noop
+
+  const { error } = await resend.emails.send({
     from,
     to: opts.to,
     subject: `${opts.event.title} — Your Ticket`,
@@ -220,6 +229,7 @@ async function sendEmailInternal(opts: {
   });
 
   if (error) {
+    // Surface in logs for debugging, but don't throw in production if you prefer.
     console.error('[email] Resend error:', error);
     throw error;
   }
