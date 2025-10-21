@@ -4,15 +4,14 @@ import { prisma } from './db';
 import { normalizeMeta, type AttendeeMeta } from './meta';
 import { buildBadgeHTML, type Brand, type EventLite } from './emailTemplate';
 
-// ───────── Lazy-load Resend to avoid build-time peer deps (@react-email/render) ─────────
-let _resend: any | null = null;
+/** Lazily create the Resend client so webpack doesn’t include it at build time */
+let resendClient: any | null = null;
 async function getResend() {
-  const key = process.env.RESEND_API_KEY?.trim();
-  if (!key) return null;
-  if (_resend) return _resend;
-  const { Resend } = await import('resend');
-  _resend = new Resend(key);
-  return _resend;
+  if (!resendClient && process.env.RESEND_API_KEY) {
+    const { Resend } = await import('resend');
+    resendClient = new Resend(process.env.RESEND_API_KEY);
+  }
+  return resendClient;
 }
 
 /** Resolve the base URL for links and PNG fetches */
@@ -21,7 +20,7 @@ function deriveBaseUrl(h?: Headers | HeadersInit): string {
   try {
     const headers = new Headers(h);
     const proto = headers.get('x-forwarded-proto') || 'https';
-    const host = headers.get('x-forwarded-host') || headers.get('host');
+    const host  = headers.get('x-forwarded-host') || headers.get('host');
     if (host) return `${proto}://${host}`;
   } catch {}
   return 'http://localhost:3000';
@@ -39,7 +38,7 @@ function normalizeBrand(val: unknown): Brand {
   return {};
 }
 
-/** Simple .ics builder (used even if route also builds one) */
+/** Simple .ics builder */
 function icsForEvent(ev: EventLite, email?: string) {
   const start = ev.date ? new Date(ev.date) : null;
   const end = start ? new Date(start.getTime() + 2 * 60 * 60 * 1000) : null;
@@ -59,9 +58,7 @@ function icsForEvent(ev: EventLite, email?: string) {
     email ? `ATTENDEE:MAILTO:${email}` : '',
     'END:VEVENT',
     'END:VCALENDAR',
-  ]
-    .filter(Boolean)
-    .join('\r\n');
+  ].filter(Boolean).join('\r\n');
 }
 
 /* ----------------------------- Public API ----------------------------- */
@@ -73,23 +70,17 @@ type V2Args = {
   event: EventLite & { slug?: string };
   token: string;
   meta: AttendeeMeta;
-  /** Optional extra attachments (base64-encoded content) */
-  attachments?: Array<{
-    filename: string;
-    content: string;
-    type?: string;
-    disposition?: string;
-    contentId?: string;
-  }>;
-  /** Helps resolve /api/tickets/png on serverless */
+  attachments?: Array<{ filename: string; content: string; type?: string; disposition?: string; contentId?: string }>;
   appUrl?: string;
-  /** Back-compat override if you already computed it elsewhere */
   ticketUrl?: string;
 };
 
 export async function sendRegistrationEmail(args: LegacyArgs): Promise<void>;
 export async function sendRegistrationEmail(args: V2Args): Promise<void>;
 export async function sendRegistrationEmail(args: LegacyArgs | V2Args): Promise<void> {
+  const resend = await getResend();
+  if (!resend) return; // Resend not configured → noop
+
   if ('eventId' in args) {
     // Legacy path: load event + brand + attendee meta
     const event = await prisma.event.findUnique({
@@ -113,7 +104,7 @@ export async function sendRegistrationEmail(args: LegacyArgs | V2Args): Promise<
     const brand = normalizeBrand(event.organizer?.brand);
     const meta = normalizeMeta(reg?.meta);
 
-    await sendEmailInternal({
+    await sendEmailInternal(resend, {
       to: args.to,
       brand,
       event: {
@@ -132,7 +123,7 @@ export async function sendRegistrationEmail(args: LegacyArgs | V2Args): Promise<
   }
 
   // V2 path
-  await sendEmailInternal({
+  await sendEmailInternal(resend, {
     to: args.to,
     brand: args.brand,
     event: args.event,
@@ -146,17 +137,20 @@ export async function sendRegistrationEmail(args: LegacyArgs | V2Args): Promise<
 
 /* --------------------------- Internal sender -------------------------- */
 
-async function sendEmailInternal(opts: {
-  to: string;
-  brand: Brand;
-  event: EventLite & { slug?: string };
-  token: string;
-  meta: AttendeeMeta;
-  fromName: string;
-  attachments?: Array<{ filename: string; content: string; type?: string; disposition?: string; contentId?: string }>;
-  appUrl?: string;
-}) {
-  // Build QR as Data URL (Resend-friendly; avoids CID issues)
+async function sendEmailInternal(
+  resend: any,
+  opts: {
+    to: string;
+    brand: Brand;
+    event: EventLite & { slug?: string };
+    token: string;
+    meta: AttendeeMeta;
+    fromName: string;
+    attachments?: Array<{ filename: string; content: string; type?: string; disposition?: string; contentId?: string }>;
+    appUrl?: string;
+  }
+) {
+  // QR as Data URL (keeps emails compatible without CID)
   const qrDataUrl = await QRCode.toDataURL(opts.token, { width: 400, margin: 1 });
 
   // Build HTML with embedded QR
@@ -169,24 +163,18 @@ async function sendEmailInternal(opts: {
     qrDataUrl,
   });
 
-  // Local ICS (we still merge any external one passed from the route)
+  // .ics calendar
   const ics = Buffer.from(icsForEvent(opts.event, opts.to), 'utf8');
 
-  // Optional full ticket PNG (generated by your API route). Never hard-fail on this.
+  // Optional full ticket PNG from API (don’t hard-fail if it’s unavailable)
   let ticketPngBase64: string | null = null;
   try {
     const baseUrl = (opts.appUrl ?? deriveBaseUrl(undefined)).replace(/\/$/, '');
-    const pngRes = await fetch(`${baseUrl}/api/tickets/png?token=${encodeURIComponent(opts.token)}`, {
-      cache: 'no-store',
-    });
-    if (pngRes.ok) {
-      ticketPngBase64 = Buffer.from(await pngRes.arrayBuffer()).toString('base64');
-    }
-  } catch {
-    // ignore
-  }
+    const pngRes = await fetch(`${baseUrl}/api/tickets/png?token=${encodeURIComponent(opts.token)}`, { cache: 'no-store' });
+    if (pngRes.ok) ticketPngBase64 = Buffer.from(await pngRes.arrayBuffer()).toString('base64');
+  } catch {}
 
-  // Build attachments (base64 content)
+  // Attachments
   const attachments: Array<{ filename: string; content: string; contentType?: string }> = [
     {
       filename: `${(opts.event as any).slug || 'event'}.ics`,
@@ -194,30 +182,16 @@ async function sendEmailInternal(opts: {
       contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
     },
   ];
-
   if (ticketPngBase64) {
-    attachments.push({
-      filename: 'ticket.png',
-      content: ticketPngBase64,
-      contentType: 'image/png',
-    });
+    attachments.push({ filename: 'ticket.png', content: ticketPngBase64, contentType: 'image/png' });
   }
-
   if (opts.attachments?.length) {
     for (const a of opts.attachments) {
-      attachments.push({
-        filename: a.filename,
-        content: a.content,
-        contentType: a.type,
-      });
+      attachments.push({ filename: a.filename, content: a.content, contentType: a.type });
     }
   }
 
-  // Resend expects a single string: "Name <email@domain>"
   const from = (process.env.EMAIL_FROM?.trim() || 'Invitation App <tickets@triggerdxb.com>');
-
-  const resend = await getResend();
-  if (!resend) return; // not configured → noop
 
   const { error } = await resend.emails.send({
     from,
@@ -229,7 +203,6 @@ async function sendEmailInternal(opts: {
   });
 
   if (error) {
-    // Surface in logs for debugging, but don't throw in production if you prefer.
     console.error('[email] Resend error:', error);
     throw error;
   }
