@@ -1,4 +1,5 @@
 // next.config.js
+// next.config.js
 const isDev = process.env.NODE_ENV !== 'production';
 
 const devCsp = [
@@ -15,7 +16,6 @@ const devCsp = [
 
 const prodCsp = [
   "default-src 'self'",
-  // Keep 'unsafe-inline' to avoid breaking Next/Tailwind runtime snips unless you adopt nonces/hashes
   "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'",
   "worker-src 'self' blob:",
   "child-src blob:",
@@ -29,9 +29,18 @@ const prodCsp = [
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
-    serverActions: true, // required for `use server`
+    serverActions: true,
+    // 👇 keep resend out of the server bundle (required to avoid @react-email/render at build time)
+    serverComponentsExternalPackages: ['resend'],
   },
-  // If you serve remote images, add domains or remotePatterns here
+  webpack(config, { isServer }) {
+    if (isServer) {
+      // Force CommonJS external for resend so it’s required at runtime only
+      config.externals = config.externals || [];
+      config.externals.push({ resend: 'commonjs resend' });
+    }
+    return config;
+  },
   images: {
     // domains: ['your-cdn.com', 'images.unsplash.com'],
   },
@@ -40,11 +49,6 @@ const nextConfig = {
       {
         source: '/(.*)',
         headers: [
-          // COOP/COEP can break third-party iframes (Stripe, OAuth). Enable ONLY if you need SAB.
-          // ...(isDev ? [] : [
-          //   { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
-          //   { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
-          // ]),
           { key: 'Content-Security-Policy', value: isDev ? devCsp : prodCsp },
         ],
       },
