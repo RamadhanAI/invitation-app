@@ -1,5 +1,4 @@
 // app/api/admin/events/[slug]/stations/[id]/route.ts
-// app/api/admin/events/[slug]/stations/[id]/route.ts
 export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
@@ -12,7 +11,15 @@ const ok = (data: any) => NextResponse.json({ ok: true, ...data });
 const bad = (msg: string, code = 400) =>
   NextResponse.json({ error: msg }, { status: code });
 
-// shared auth helper (must match parent route)
+function generatePlainSecret() {
+  return crypto
+    .randomBytes(24)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
 async function gate(slug: string) {
   const hdrs = headers();
   const headerKey = hdrs.get('x-api-key') || '';
@@ -21,28 +28,25 @@ async function gate(slug: string) {
 
   const event = await prisma.event.findUnique({
     where: { slug },
-    select: {
-      id: true,
-      organizer: { select: { apiKey: true } },
-    },
+    select: { id: true, organizer: { select: { apiKey: true } } },
   });
-
   if (!event) return { event: null, pass: false };
 
-  const globalKey =
+  const globalKey = (
     process.env.NEXT_PUBLIC_ADMIN_KEY ||
     process.env.ADMIN_KEY ||
-    '';
+    ''
+  ).trim();
 
   const pass =
     !!candidateKey &&
     (candidateKey === globalKey ||
-      candidateKey === event.organizer?.apiKey);
+      candidateKey === (event.organizer?.apiKey || ''));
 
   return { event, pass };
 }
 
-// PATCH -> rotate secret OR update station fields
+// PATCH /api/admin/events/[slug]/stations/[id]
 export async function PATCH(
   req: Request,
   { params }: { params: { slug: string; id: string } }
@@ -55,28 +59,28 @@ export async function PATCH(
     name?: string;
     code?: string;
     active?: boolean;
-  };
+  } | null;
 
-  // ensure station belongs to this event
+  // Ensure station belongs to this event
   const st = await prisma.station.findUnique({
     where: { id: params.id },
     select: { id: true, eventId: true },
   });
   if (!st || st.eventId !== event.id) return bad('Not found', 404);
 
-  // Rotate secret
+  // Handle rotate
   if (body?.rotateSecret) {
-    const secret = crypto.randomBytes(24).toString('base64url');
-    const secretHash = await hashSecret(secret);
+    const secretPlain = generatePlainSecret();
+    const secretHash = await hashSecret(secretPlain);
     await prisma.station.update({
       where: { id: st.id },
       data: { secretHash },
     });
-    return ok({ secret }); // plaintext once
+    return ok({ secret: secretPlain });
   }
 
-  // other updates (rename, recode, activate/deactivate)
-  const data: Record<string, any> = {};
+  // Handle rename / recode / toggle active
+  const data: any = {};
   if (typeof body?.name === 'string') data.name = body.name.trim();
   if (typeof body?.code === 'string') data.code = body.code.trim();
   if (typeof body?.active === 'boolean') data.active = body.active;
@@ -86,12 +90,13 @@ export async function PATCH(
   const station = await prisma.station.update({
     where: { id: st.id },
     data,
+    select: { id: true, name: true, code: true, active: true, createdAt: true },
   });
 
   return ok({ station });
 }
 
-// DELETE -> soft-delete station (set active=false)
+// DELETE /api/admin/events/[slug]/stations/[id]
 export async function DELETE(
   _req: Request,
   { params }: { params: { slug: string; id: string } }
@@ -99,6 +104,7 @@ export async function DELETE(
   const { event, pass } = await gate(params.slug);
   if (!event || !pass) return bad('Unauthorized', 401);
 
+  // Soft-delete: set active=false
   const st = await prisma.station.findUnique({
     where: { id: params.id },
     select: { id: true, eventId: true },
