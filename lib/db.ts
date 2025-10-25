@@ -1,85 +1,26 @@
 // lib/db.ts
-// Robust import that works even if the editor hasn't picked up generated types yet
-import type { PrismaClient as PrismaClientType } from '@prisma/client';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { PrismaClient } = require('@prisma/client') as typeof import('@prisma/client');
+import { PrismaClient } from '@prisma/client';
 
-let loggedOnce = false;
+// Singleton guard (avoids hot-reload multiple connections)
+const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
-// Local JSON type
-type JsonPrimitive = string | number | boolean | null;
-export type JsonValue = JsonPrimitive | { [k: string]: JsonValue } | JsonValue[];
-
-// In the **app runtime** we always use the pooler (DATABASE_URL).
-if (process.env.PRISMA_USE_DIRECT) {
-  if (!loggedOnce) {
-    console.warn('[DB] Ignoring PRISMA_USE_DIRECT in app runtime (using DATABASE_URL pooler).');
-    loggedOnce = true;
-  }
-  delete (process.env as any).PRISMA_USE_DIRECT;
-}
-
-function resolveDbUrl(): string | undefined {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    if (!loggedOnce) {
-      console.warn('[DB] DATABASE_URL is not set. Prisma will fail to connect.');
-      loggedOnce = true;
-    }
-    return url;
-  }
-
-  try {
-    const u = new URL(url);
-    const host = u.hostname;
-    const port = u.port || '5432';
-    const params = u.searchParams;
-    const isPooler = /pooler\.supabase\.com$/i.test(host);
-
-    if (!loggedOnce && process.env.NODE_ENV !== 'production') {
-      console.log(`[DB] Using ${host}:${port}${u.search || ''}`);
-      if (!isPooler) console.warn('[DB] WARNING: DATABASE_URL is not a Supabase pooler host.');
-      if (isPooler && params.get('pgbouncer') !== 'true') {
-        console.warn('[DB] WARNING: Pooler URL without ?pgbouncer=true — add it so Prisma disables prepared statements.');
-      }
-      loggedOnce = true;
-    }
-  } catch { /* ignore */ }
-  return url;
-}
-
-const prismaClientSingleton = () =>
+export const prisma =
+  globalForPrisma.prisma ??
   new PrismaClient({
-    datasources: { db: { url: resolveDbUrl() } },
-    log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
-    errorFormat: 'colorless',
+    log:
+      process.env.NODE_ENV === 'development'
+        ? ['query', 'warn', 'error']
+        : ['error'],
   });
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __prisma: PrismaClientType | undefined;
-}
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
-export const prisma: PrismaClientType = globalThis.__prisma ?? prismaClientSingleton();
-if (process.env.NODE_ENV !== 'production') globalThis.__prisma = prisma;
-
-// ===== helper types
+// ---- Helpers ----
 export type AttendanceSummary = { total: number; attended: number; noShows: number };
-export type RegistrationLite = {
-  id: string;
-  email: string;
-  attended: boolean;
-  registeredAt: Date | null;
-  scannedAt: Date | null;
-  scannedBy: string | null;
-  checkedOutAt: Date | null;
-  checkedOutBy: string | null;
-  qrToken: string;
-  meta: JsonValue | null;
-};
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | { [k: string]: JsonValue } | JsonValue[];
 
-// ===== helper fns
-export async function getRegistrations(eventId: string): Promise<RegistrationLite[]> {
+export async function getRegistrations(eventId: string) {
   return prisma.registration.findMany({
     where: { eventId },
     orderBy: [{ registeredAt: 'asc' }],
@@ -95,7 +36,7 @@ export async function getRegistrations(eventId: string): Promise<RegistrationLit
       qrToken: true,
       meta: true,
     },
-  }) as unknown as RegistrationLite[];
+  });
 }
 
 export async function getAttendance(eventId: string): Promise<AttendanceSummary> {
@@ -117,7 +58,7 @@ export async function getEventBySlug(slug: string) {
 
 export async function pingDb() {
   try {
-    const [row] = await prisma.$queryRaw<{ now: Date }[]>`select now() as now`;
+    const [row] = await prisma.$queryRaw<{ now: Date }[]>`SELECT NOW() AS now`;
     return { ok: true as const, now: row?.now ?? new Date() };
   } catch (e: any) {
     return { ok: false as const, error: String(e?.message || e) };
