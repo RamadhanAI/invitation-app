@@ -1,21 +1,18 @@
 // components/Admin/AdminStationsClient.tsx  (or wherever you keep it)
-// components/Admin/AdminStationsClient.tsx
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
 
-const ADMIN_KEY =
-  process.env.NEXT_PUBLIC_ADMIN_KEY || process.env.ADMIN_KEY || '';
+const ADMIN_KEY = (process.env.NEXT_PUBLIC_ADMIN_KEY || process.env.ADMIN_KEY || '').trim();
 
 type StationRow = {
   id: string;
   name: string;
-  apiKeyMasked: string;       // server returns "code: S#"
-  lastUsedAt: string | null;  // server returns null (ok)
-  createdAt: string;          // serialized ISO from NextResponse.json
+  apiKeyMasked: string;
+  lastUsedAt: string | null;
+  createdAt: string;
 };
 
-// pick 'apiKey' (old) or 'secret' (current API) from responses
 const pickPlain = (j: any): string | null => j?.apiKey ?? j?.secret ?? null;
 
 export default function AdminStationsClient({ slug }: { slug: string }) {
@@ -24,22 +21,72 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
   const [plainKey, setPlainKey] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
+  const [adminOk, setAdminOk] = useState<boolean>(!!ADMIN_KEY);
+  const [adminKeyInput, setAdminKeyInput] = useState('');
+
+  async function checkAdminCookie() {
+    try {
+      const r = await fetch('/api/admin/session', {
+        method: 'GET',
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      const j = await r.json().catch(() => ({}));
+      if ((r.ok && j?.ok === true) || ADMIN_KEY) {
+        setAdminOk(true);
+      } else {
+        setAdminOk(false);
+      }
+    } catch {
+      setAdminOk(!!ADMIN_KEY);
+    }
+  }
+
+  async function adminLoginViaCookie() {
+    if (!adminKeyInput.trim()) return;
+    const r = await fetch('/api/admin/session', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key: adminKeyInput.trim() }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j?.ok) {
+      setAdminKeyInput('');
+      setAdminOk(true);
+      await load();
+    } else {
+      alert(j?.error || 'Admin login failed');
+    }
+  }
+
   async function load() {
     const r = await fetch(
       `/api/admin/events/${encodeURIComponent(slug)}/stations`,
       {
         headers: ADMIN_KEY ? { 'x-api-key': ADMIN_KEY } : {},
+        credentials: 'same-origin',
         cache: 'no-store',
       }
     );
     const j = await r.json();
-    if (r.ok && j.ok) setRows(j.stations);
-    else console.error('[stations:list] ', j?.error || r.statusText);
+    if (r.ok && j.ok) {
+      setRows(j.stations);
+    } else {
+      setRows([]);
+      console.error('[stations:list] ', j?.error || r.statusText);
+    }
   }
 
   useEffect(() => {
-    void load();
-  }, [slug]);
+    void checkAdminCookie();
+  }, []);
+
+  useEffect(() => {
+    if (adminOk) {
+      void load();
+    }
+  }, [slug, adminOk]);
 
   async function createOne(label: string) {
     const r = await fetch(
@@ -50,12 +97,13 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
           'content-type': 'application/json',
           ...(ADMIN_KEY ? { 'x-api-key': ADMIN_KEY } : {}),
         },
-        body: JSON.stringify({ name: label, label }), // send both keys; server accepts either
+        credentials: 'same-origin',
+        body: JSON.stringify({ name: label, label }),
       }
     );
     const j = await r.json();
     if (r.ok && j.ok) {
-      setPlainKey(pickPlain(j)); // ← secret/apiKey compatible
+      setPlainKey(pickPlain(j));
       await load();
     } else {
       alert(j.error || 'Failed to create scanner');
@@ -71,15 +119,16 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
           'content-type': 'application/json',
           ...(ADMIN_KEY ? { 'x-api-key': ADMIN_KEY } : {}),
         },
-        body: JSON.stringify({ rotateSecret: true }), // ← matches your API
+        credentials: 'same-origin',
+        body: JSON.stringify({ rotateSecret: true }),
       }
     );
-    const j = await r.json();
-    if (r.ok && j.ok) {
-      setPlainKey(pickPlain(j)); // ← returns { secret }
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j?.ok) {
+      setPlainKey(pickPlain(j));
       await load();
     } else {
-      alert(j.error || 'Failed to rotate key');
+      alert(j?.error || 'Failed to rotate key');
     }
   }
 
@@ -90,15 +139,43 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
       {
         method: 'DELETE',
         headers: ADMIN_KEY ? { 'x-api-key': ADMIN_KEY } : {},
+        credentials: 'same-origin',
       }
     );
-    const j = await r.json();
-    if (r.ok && j.ok) await load();
-    else alert(j.error || 'Failed to delete scanner');
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j?.ok) {
+      await load();
+    } else {
+      alert(j?.error || 'Failed to delete scanner');
+    }
   }
 
   return (
     <div className="space-y-3">
+      {!ADMIN_KEY && !adminOk && (
+        <div className="p-3 border rounded-lg border-white/10 bg-amber-500/10">
+          <div className="mb-2 text-sm">Admin authentication required</div>
+          <div className="flex gap-2">
+            <input
+              className="a-input"
+              type="password"
+              placeholder="Enter admin key…"
+              value={adminKeyInput}
+              onChange={(e) => setAdminKeyInput(e.target.value)}
+            />
+            <button
+              className="a-btn a-btn--primary"
+              onClick={adminLoginViaCookie}
+            >
+              Sign in
+            </button>
+          </div>
+          <div className="mt-1 text-xs opacity-70">
+            Key will be stored in an httpOnly cookie and sent automatically.
+          </div>
+        </div>
+      )}
+
       <div className="flex gap-2">
         <input
           className="a-input"
@@ -108,7 +185,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
         />
         <button
           className="a-btn a-btn--primary"
-          disabled={!name || pending}
+          disabled={!name || pending || !adminOk}
           onClick={() => start(() => void createOne(name))}
         >
           Add scanner
@@ -116,6 +193,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
 
         <button
           className="a-btn"
+          disabled={pending || !adminOk}
           onClick={() =>
             start(() =>
               (async () => {
@@ -148,7 +226,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
           <div className="mt-2">
             <button
               className="a-btn a-btn--accent"
-              onClick={() => navigator.clipboard.writeText(plainKey)}
+              onClick={() => navigator.clipboard.writeText(plainKey!)}
             >
               Copy
             </button>
@@ -181,11 +259,16 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
               </td>
               <td className="a-td">
                 <div className="flex gap-2">
-                  <button className="a-btn" onClick={() => rotate(r.id)}>
+                  <button
+                    className="a-btn"
+                    disabled={!adminOk}
+                    onClick={() => rotate(r.id)}
+                  >
                     Rotate key
                   </button>
                   <button
                     className="a-btn a-btn--ghost"
+                    disabled={!adminOk}
                     onClick={() => remove(r.id)}
                   >
                     Delete
