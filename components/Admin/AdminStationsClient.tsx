@@ -3,28 +3,40 @@
 
 import { useEffect, useState, useTransition } from 'react';
 
-const ADMIN_KEY = (process.env.NEXT_PUBLIC_ADMIN_KEY || process.env.ADMIN_KEY || '').trim();
+// If NEXT_PUBLIC_ADMIN_KEY is defined in Vercel at build time, it gets baked here.
+// ADMIN_KEY will NOT be available to the browser in production unless you exposed it as NEXT_PUBLIC_...
+const BAKED_ADMIN_KEY = (process.env.NEXT_PUBLIC_ADMIN_KEY || process.env.ADMIN_KEY || '').trim();
 
 type StationRow = {
   id: string;
   name: string;
-  apiKeyMasked: string;
-  lastUsedAt: string | null;
-  createdAt: string;
+  apiKeyMasked: string;       // e.g. "code: S1 (inactive)"
+  lastUsedAt: string | null;  // currently always null
+  createdAt: string;          // ISO string
 };
 
+// pull out plaintext secret or legacy apiKey field
 const pickPlain = (j: any): string | null => j?.apiKey ?? j?.secret ?? null;
 
 export default function AdminStationsClient({ slug }: { slug: string }) {
+  // station table
   const [rows, setRows] = useState<StationRow[]>([]);
   const [name, setName] = useState('');
   const [plainKey, setPlainKey] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
-  const [adminOk, setAdminOk] = useState<boolean>(!!ADMIN_KEY);
+  // admin auth state
+  // start "true" if we got a key baked into the bundle at build time, otherwise false
+  const [adminOk, setAdminOk] = useState<boolean>(!!BAKED_ADMIN_KEY);
   const [adminKeyInput, setAdminKeyInput] = useState('');
 
+  // Check if we already have a valid admin_key cookie
   async function checkAdminCookie() {
+    // if we baked a key in the bundle, we already consider you adminOk
+    if (BAKED_ADMIN_KEY) {
+      setAdminOk(true);
+      return;
+    }
     try {
       const r = await fetch('/api/admin/session', {
         method: 'GET',
@@ -32,16 +44,17 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
         cache: 'no-store',
       });
       const j = await r.json().catch(() => ({}));
-      if ((r.ok && j?.ok === true) || ADMIN_KEY) {
+      if (r.ok && j?.ok === true) {
         setAdminOk(true);
       } else {
         setAdminOk(false);
       }
     } catch {
-      setAdminOk(!!ADMIN_KEY);
+      setAdminOk(false);
     }
   }
 
+  // Submit admin key → server validates → sets httpOnly cookie if valid
   async function adminLoginViaCookie() {
     if (!adminKeyInput.trim()) return;
     const r = await fetch('/api/admin/session', {
@@ -60,11 +73,12 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
     }
   }
 
+  // Load station list
   async function load() {
     const r = await fetch(
       `/api/admin/events/${encodeURIComponent(slug)}/stations`,
       {
-        headers: ADMIN_KEY ? { 'x-api-key': ADMIN_KEY } : {},
+        headers: BAKED_ADMIN_KEY ? { 'x-api-key': BAKED_ADMIN_KEY } : {},
         credentials: 'same-origin',
         cache: 'no-store',
       }
@@ -74,14 +88,16 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
       setRows(j.stations);
     } else {
       setRows([]);
-      console.error('[stations:list] ', j?.error || r.statusText);
+      console.error('[stations:list]', j?.error || r.statusText);
     }
   }
 
+  // On mount, ask server if cookie is valid (or rely on baked key)
   useEffect(() => {
     void checkAdminCookie();
   }, []);
 
+  // Whenever slug or admin auth changes, (re)load table
   useEffect(() => {
     if (adminOk) {
       void load();
@@ -95,7 +111,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          ...(ADMIN_KEY ? { 'x-api-key': ADMIN_KEY } : {}),
+          ...(BAKED_ADMIN_KEY ? { 'x-api-key': BAKED_ADMIN_KEY } : {}),
         },
         credentials: 'same-origin',
         body: JSON.stringify({ name: label, label }),
@@ -103,6 +119,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
     );
     const j = await r.json();
     if (r.ok && j.ok) {
+      // show the new secret one time
       setPlainKey(pickPlain(j));
       await load();
     } else {
@@ -117,7 +134,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
         method: 'PATCH',
         headers: {
           'content-type': 'application/json',
-          ...(ADMIN_KEY ? { 'x-api-key': ADMIN_KEY } : {}),
+          ...(BAKED_ADMIN_KEY ? { 'x-api-key': BAKED_ADMIN_KEY } : {}),
         },
         credentials: 'same-origin',
         body: JSON.stringify({ rotateSecret: true }),
@@ -125,7 +142,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
     );
     const j = await r.json().catch(() => ({}));
     if (r.ok && j?.ok) {
-      setPlainKey(pickPlain(j));
+      setPlainKey(pickPlain(j)); // should be { secret: "..." }
       await load();
     } else {
       alert(j?.error || 'Failed to rotate key');
@@ -138,7 +155,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
       `/api/admin/events/${encodeURIComponent(slug)}/stations/${id}`,
       {
         method: 'DELETE',
-        headers: ADMIN_KEY ? { 'x-api-key': ADMIN_KEY } : {},
+        headers: BAKED_ADMIN_KEY ? { 'x-api-key': BAKED_ADMIN_KEY } : {},
         credentials: 'same-origin',
       }
     );
@@ -152,7 +169,8 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
 
   return (
     <div className="space-y-3">
-      {!ADMIN_KEY && !adminOk && (
+      {/* If we are NOT admin yet, show login strip */}
+      {!adminOk && (
         <div className="p-3 border rounded-lg border-white/10 bg-amber-500/10">
           <div className="mb-2 text-sm">Admin authentication required</div>
           <div className="flex gap-2">
@@ -171,7 +189,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
             </button>
           </div>
           <div className="mt-1 text-xs opacity-70">
-            Key will be stored in an httpOnly cookie and sent automatically.
+            We store your key in an httpOnly cookie and send it automatically.
           </div>
         </div>
       )}
@@ -220,8 +238,8 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
           </div>
           <div className="font-mono break-all">{plainKey}</div>
           <div className="mt-1 text-xs opacity-70">
-            Share this key with the person who will scan. They’ll open{' '}
-            <code>/scan</code>, paste the key, and select the event.
+            Share this key with the guard. They’ll open <code>/scan</code>,
+            enter event slug + station code, paste this key, and arm.
           </div>
           <div className="mt-2">
             <button
