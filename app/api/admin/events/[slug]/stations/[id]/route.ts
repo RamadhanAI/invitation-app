@@ -6,29 +6,74 @@ export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { requireAdminForSlug } from '@/lib/adminAuth';
 import * as crypto from 'node:crypto';
 import { hashSecret } from '@/lib/password';
+import { getAdminUsernameOrNull } from '@/lib/adminSession';
 
-function bad(msg: string, code = 400) {
-  return NextResponse.json({ error: msg }, { status: code });
+function maskStation(row: {
+  id: string;
+  name: string;
+  code: string;
+  active: boolean;
+  createdAt: Date;
+}) {
+  return {
+    id: row.id,
+    name: row.name,
+    apiKeyMasked: `code: ${row.code}${row.active ? '' : ' (inactive)'}`,
+    lastUsedAt: null,
+    createdAt: row.createdAt.toISOString(),
+  };
 }
-function ok(data: any) {
-  return NextResponse.json({ ok: true, ...data });
+
+// helper: confirm that station `[id]` belongs to event slug `[slug]`
+async function ensureStationBelongsToSlug(stationId: string, slug: string) {
+  const st = await prisma.station.findUnique({
+    where: { id: stationId },
+    select: { id: true, eventId: true },
+  });
+  if (!st) {
+    return { ok: false as const, status: 404 as const, error: 'station not found' };
+  }
+
+  const ev = await prisma.event.findUnique({
+    where: { slug },
+    select: { id: true },
+  });
+  if (!ev) {
+    return { ok: false as const, status: 404 as const, error: 'event not found' };
+  }
+
+  if (st.eventId !== ev.id) {
+    return { ok: false as const, status: 403 as const, error: 'station not for this event' };
+  }
+
+  return { ok: true as const, eventId: ev.id };
 }
 
 // PATCH /api/admin/events/[slug]/stations/[id]
+// body can be:
+//   { rotate: true }
+//   { name, code, active }
 export async function PATCH(
   req: Request,
-  {
-    params,
-  }: { params: { slug: string; id: string } }
+  { params }: { params: { slug: string; id: string } }
 ) {
-  const gate = await requireAdminForSlug(req, params.slug);
-  if (!gate.ok) {
+  // cookie auth
+  const adminUser = getAdminUsernameOrNull();
+  if (!adminUser) {
     return NextResponse.json(
-      { error: gate.error },
-      { status: gate.status }
+      { ok: false, error: 'unauthorized' },
+      { status: 401 }
+    );
+  }
+
+  // ensure correct event/station
+  const belongs = await ensureStationBelongsToSlug(params.id, params.slug);
+  if (!belongs.ok) {
+    return NextResponse.json(
+      { ok: false, error: belongs.error },
+      { status: belongs.status }
     );
   }
 
@@ -45,52 +90,38 @@ export async function PATCH(
     body = Object.fromEntries(fd.entries());
   }
 
-  // ensure station belongs to that event
-  const st = await prisma.station.findUnique({
-    where: { id: params.id },
-    select: { id: true, eventId: true },
-  });
-  if (!st || st.eventId !== gate.eventId) {
-    return bad('Not found', 404);
+  const dataToUpdate: Record<string, any> = {};
+  let freshSecretPlain: string | undefined;
+
+  // rotate secret?
+  if (body.rotate === true || body.rotate === 'true') {
+    freshSecretPlain = crypto.randomBytes(24).toString('base64url');
+    dataToUpdate.secretHash = await hashSecret(freshSecretPlain);
   }
 
-  // rotateSecret?
-  if (body.rotateSecret) {
-    const secretPlain = crypto
-      .randomBytes(24)
-      .toString('base64url');
-    const secretHash = await hashSecret(secretPlain);
-
-    await prisma.station.update({
-      where: { id: st.id },
-      data: { secretHash },
-    });
-
-    return ok({ secret: secretPlain });
-  }
-
-  // rename / toggle active / change code
-  const data: any = {};
+  // rename / recode / toggle active
   if (typeof body.name === 'string') {
-    data.name = body.name.trim();
+    dataToUpdate.name = body.name.trim();
   }
   if (typeof body.code === 'string') {
-    data.code = body.code.trim();
+    dataToUpdate.code = body.code.trim();
   }
-  if (typeof body.active === 'string') {
-    // "true"/"false" from formdata
-    data.active = body.active === 'true';
-  } else if (typeof body.active === 'boolean') {
-    data.active = body.active;
+  if (typeof body.active === 'boolean') {
+    dataToUpdate.active = body.active;
+  } else if (typeof body.active === 'string') {
+    dataToUpdate.active = body.active === 'true';
   }
 
-  if (!Object.keys(data).length) {
-    return bad('Nothing to update');
+  if (!Object.keys(dataToUpdate).length) {
+    return NextResponse.json(
+      { ok: false, error: 'Nothing to update' },
+      { status: 400 }
+    );
   }
 
   const updated = await prisma.station.update({
-    where: { id: st.id },
-    data,
+    where: { id: params.id },
+    data: dataToUpdate,
     select: {
       id: true,
       name: true,
@@ -100,42 +131,49 @@ export async function PATCH(
     },
   });
 
-  return ok({ station: updated });
+  return NextResponse.json({
+    ok: true,
+    station: maskStation(updated),
+    ...(freshSecretPlain ? { secret: freshSecretPlain } : {}),
+  });
 }
 
 // DELETE /api/admin/events/[slug]/stations/[id]
+// HARD DELETE (no more soft deactivate)
 export async function DELETE(
-  req: Request,
-  {
-    params,
-  }: { params: { slug: string; id: string } }
+  _req: Request,
+  { params }: { params: { slug: string; id: string } }
 ) {
-  const gate = await requireAdminForSlug(req, params.slug);
-  if (!gate.ok) {
+  // cookie auth
+  const adminUser = getAdminUsernameOrNull();
+  if (!adminUser) {
     return NextResponse.json(
-      { error: gate.error },
-      { status: gate.status }
+      { ok: false, error: 'unauthorized' },
+      { status: 401 }
     );
   }
 
-  // soft delete => set active=false
-  const st = await prisma.station.findUnique({
-    where: { id: params.id },
-    select: { id: true, eventId: true },
-  });
-  if (!st || st.eventId !== gate.eventId) {
-    return bad('Not found', 404);
+  // ensure correct event/station
+  const belongs = await ensureStationBelongsToSlug(params.id, params.slug);
+  if (!belongs.ok) {
+    return NextResponse.json(
+      { ok: false, error: belongs.error },
+      { status: belongs.status }
+    );
   }
 
-  await prisma.station.update({
-    where: { id: st.id },
-    data: { active: false },
+  // HARD DELETE
+  await prisma.station.delete({
+    where: { id: params.id },
   });
 
-  return ok({ deleted: true });
+  return NextResponse.json({
+    ok: true,
+    deleted: true,
+  });
 }
 
-// Preflight
+// OPTIONS
 export function OPTIONS() {
   return new Response(null, { status: 204 });
 }

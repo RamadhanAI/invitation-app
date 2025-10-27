@@ -10,7 +10,7 @@ import * as crypto from 'node:crypto';
 import { hashSecret } from '@/lib/password';
 import { getAdminUsernameOrNull } from '@/lib/adminSession';
 
-// Take the DB row and shape it for the UI table
+// Shape the DB row for the UI
 function maskStation(row: {
   id: string;
   name: string;
@@ -21,19 +21,41 @@ function maskStation(row: {
   return {
     id: row.id,
     name: row.name,
+    // We keep "(inactive)" suffix only if active === false,
+    // otherwise just "code: S14"
     apiKeyMasked: `code: ${row.code}${row.active ? '' : ' (inactive)'}`,
-    lastUsedAt: null, // placeholder until you track last scan usage
+    lastUsedAt: null, // placeholder: could add station.lastUsedAt later
     createdAt: row.createdAt.toISOString(),
   };
 }
 
-// Utility: get eventId from slug or return null
+// helper: find eventId by slug
 async function getEventIdBySlug(slug: string): Promise<string | null> {
-  const event = await prisma.event.findUnique({
+  const ev = await prisma.event.findUnique({
     where: { slug },
     select: { id: true },
   });
-  return event?.id ?? null;
+  return ev?.id ?? null;
+}
+
+// helper: generate next code like S14, S15, ...
+async function pickNextCode(eventId: string): Promise<string> {
+  const stations = await prisma.station.findMany({
+    where: { eventId },
+    select: { code: true },
+  });
+
+  // Look for codes like S<number> and pick the max number
+  let maxN = 0;
+  for (const st of stations) {
+    const m = /^S(\d+)$/.exec(st.code);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > maxN) maxN = n;
+    }
+  }
+
+  return `S${maxN + 1}`;
 }
 
 // GET /api/admin/events/[slug]/stations
@@ -41,7 +63,7 @@ export async function GET(
   _req: Request,
   { params }: { params: { slug: string } }
 ) {
-  // 1. auth via inv_admin cookie only
+  // auth via cookie
   const adminUser = getAdminUsernameOrNull();
   if (!adminUser) {
     return NextResponse.json(
@@ -50,7 +72,6 @@ export async function GET(
     );
   }
 
-  // 2. find event by slug
   const eventId = await getEventIdBySlug(params.slug);
   if (!eventId) {
     return NextResponse.json(
@@ -59,7 +80,6 @@ export async function GET(
     );
   }
 
-  // 3. read stations
   const stations = await prisma.station.findMany({
     where: { eventId },
     orderBy: [{ createdAt: 'asc' }],
@@ -79,12 +99,12 @@ export async function GET(
 }
 
 // POST /api/admin/events/[slug]/stations
-// body: { name: string, code?: string }
+// body: { name: string }
 export async function POST(
   req: Request,
   { params }: { params: { slug: string } }
 ) {
-  // 1. auth via cookie
+  // auth
   const adminUser = getAdminUsernameOrNull();
   if (!adminUser) {
     return NextResponse.json(
@@ -93,7 +113,6 @@ export async function POST(
     );
   }
 
-  // 2. event lookup
   const eventId = await getEventIdBySlug(params.slug);
   if (!eventId) {
     return NextResponse.json(
@@ -102,7 +121,7 @@ export async function POST(
     );
   }
 
-  // 3. parse body
+  // parse body
   let body: any = {};
   const ct = req.headers.get('content-type') || '';
   if (ct.includes('application/json')) {
@@ -116,7 +135,6 @@ export async function POST(
   }
 
   const rawName = (body.name ?? body.label ?? '').toString().trim();
-
   if (!rawName) {
     return NextResponse.json(
       { ok: false, error: 'Missing scanner name' },
@@ -124,46 +142,50 @@ export async function POST(
     );
   }
 
-  // if caller sent an explicit code, honor it. otherwise auto "S<number>"
-  let code = (body.code ?? '').toString().trim();
-  if (!code) {
-    const count = await prisma.station.count({
-      where: { eventId },
+  // build code and secret
+  try {
+    const code = await pickNextCode(eventId);
+
+    const secretPlain = crypto.randomBytes(24).toString('base64url');
+    const secretHash = await hashSecret(secretPlain);
+
+    const st = await prisma.station.create({
+      data: {
+        eventId,
+        name: rawName,
+        code,
+        secretHash,
+        active: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        active: true,
+        createdAt: true,
+      },
     });
-    code = `S${count + 1}`;
+
+    return NextResponse.json({
+      ok: true,
+      station: maskStation(st),
+      secret: secretPlain, // show once for the scanner staff
+    });
+  } catch (err: any) {
+    console.error('[stations:POST] create failed', err);
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          err?.message ||
+          'Failed to create scanner',
+      },
+      { status: 500 }
+    );
   }
-
-  // generate and hash secret
-  const secretPlain = crypto.randomBytes(24).toString('base64url');
-  const secretHash = await hashSecret(secretPlain);
-
-  // create station
-  const st = await prisma.station.create({
-    data: {
-      eventId,
-      name: rawName,
-      code,
-      secretHash,
-      active: true,
-    },
-    select: {
-      id: true,
-      name: true,
-      code: true,
-      active: true,
-      createdAt: true,
-    },
-  });
-
-  return NextResponse.json({
-    ok: true,
-    station: maskStation(st),
-    // VERY IMPORTANT: we return this plaintext once so staff can copy it
-    secret: secretPlain,
-  });
 }
 
-// OPTIONS is here for CORS/preflight safety (esp. if you ever hit this from another origin)
+// OPTIONS for CORS/preflight if needed
 export function OPTIONS() {
   return new Response(null, { status: 204 });
 }
