@@ -33,3 +33,11 @@ declare module 'papaparse' {
   const _default: { parse: typeof parse };
   export default _default;
 }
+// types/custom.d.ts
+
+declare module 'bcryptjs' {
+  export function compare(
+    data: string,
+    encrypted: string
+  ): Promise<boolean>;
+}
