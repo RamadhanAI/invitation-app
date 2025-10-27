@@ -12,142 +12,161 @@ type StationRow = {
   createdAt: string;
 };
 
-export default function AdminStationsClient({
-  slug,
-}: {
-  slug: string;
-}) {
+export default function AdminStationsClient({ slug }: { slug: string }) {
   const [rows, setRows] = useState<StationRow[]>([]);
   const [name, setName] = useState('');
   const [plainKey, setPlainKey] = useState<string | null>(null);
-  const [pending, start] = useTransition();
-  const [authChecked, setAuthChecked] = useState(false); // block UI until session check done
 
-  // 1. verify admin cookie session
-  async function ensureSession() {
-    const res = await fetch('/api/admin/session', {
-      method: 'GET',
-      credentials: 'same-origin',
-      cache: 'no-store',
-    });
-    if (res.status === 401) {
-      // not logged in -> bounce to /login with return
-      const nextUrl = `/admin/events/${encodeURIComponent(
-        slug
-      )}/stations`;
-      window.location.href = `/login?next=${encodeURIComponent(
-        nextUrl
-      )}`;
-      return false;
-    }
-    return true;
+  // sessionExpired = true means: server said 401, cookie not valid anymore
+  const [sessionExpired, setSessionExpired] = useState(false);
+
+  const [pending, start] = useTransition();
+
+  // --- helpers -------------------------------------------------------------
+
+  function loginRedirectHref() {
+    const nextUrl = `/admin/events/${encodeURIComponent(slug)}/stations`;
+    return `/login?next=${encodeURIComponent(nextUrl)}`;
   }
 
-  // 2. load stations list
-  async function load() {
-    const r = await fetch(
-      `/api/admin/events/${encodeURIComponent(
-        slug
-      )}/stations`,
+  async function loadStations() {
+    // GET /api/admin/events/[slug]/stations
+    const res = await fetch(
+      `/api/admin/events/${encodeURIComponent(slug)}/stations`,
       {
         method: 'GET',
-        credentials: 'same-origin',
+        credentials: 'include',
         cache: 'no-store',
       }
     );
-    const j = await r.json();
-    if (r.ok && j.ok) {
-      setRows(j.stations);
-    } else {
-      console.error('[stations:list]', j?.error || r.statusText);
-      alert(j?.error || 'Failed to load stations');
+
+    if (res.status === 401) {
+      // no valid inv_admin cookie
+      setSessionExpired(true);
+      return;
     }
+
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) {
+      console.error('[stations:list]', j?.error || res.statusText);
+      alert(j?.error || 'Failed to load stations');
+      return;
+    }
+
+    // NOTE: new API returns { ok:true, items:[...] }
+    setRows(j.items || []);
+    setSessionExpired(false);
   }
 
-  useEffect(() => {
-    (async () => {
-      const ok = await ensureSession();
-      if (ok) {
-        await load();
-        setAuthChecked(true);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug]);
-
-  // create new station
+  // create new scanner/station
   async function createOne(label: string) {
-    const r = await fetch(
-      `/api/admin/events/${encodeURIComponent(
-        slug
-      )}/stations`,
+    // We send both name + code using the same label to satisfy the
+    // new POST body { name, code } requirement.
+    const res = await fetch(
+      `/api/admin/events/${encodeURIComponent(slug)}/stations`,
       {
         method: 'POST',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: {
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ name: label }),
+        body: JSON.stringify({ name: label, code: label }),
       }
     );
-    const j = await r.json();
-    if (r.ok && j.ok) {
-      setPlainKey(j.secret || null); // show the one-time secret for this station
-      await load();
-      setName('');
-    } else {
-      alert(j.error || 'Failed to create scanner');
+
+    if (res.status === 401) {
+      setSessionExpired(true);
+      return;
     }
+
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) {
+      alert(j.error || 'Failed to create scanner');
+      return;
+    }
+
+    // new API returns { ok:true, station, secret: <plaintext> }
+    setPlainKey(j.secret || null);
+    await loadStations();
+    setName('');
   }
 
   // rotate station secret
   async function rotate(id: string) {
-    const r = await fetch(
-      `/api/admin/events/${encodeURIComponent(
-        slug
-      )}/stations/${id}`,
+    const res = await fetch(
+      `/api/admin/events/${encodeURIComponent(slug)}/stations/${id}`,
       {
         method: 'PATCH',
-        credentials: 'same-origin',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ rotateSecret: true }),
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        // new API expects { rotate: true } instead of { rotateSecret: true }
+        body: JSON.stringify({ rotate: true }),
       }
     );
-    const j = await r.json();
-    if (r.ok && j.ok) {
-      setPlainKey(j.secret || null);
-      await load();
-    } else {
-      alert(j.error || 'Failed to rotate key');
+
+    if (res.status === 401) {
+      setSessionExpired(true);
+      return;
     }
+
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) {
+      alert(j.error || 'Failed to rotate key');
+      return;
+    }
+
+    // PATCH returns { ok:true, station, secret?: <new plaintext> }
+    setPlainKey(j.secret || null);
+    await loadStations();
   }
 
-  // delete (soft deactivate)
+  // soft-deactivate station
   async function remove(id: string) {
     if (!confirm('Deactivate this scanner?')) return;
-    const r = await fetch(
-      `/api/admin/events/${encodeURIComponent(
-        slug
-      )}/stations/${id}`,
+
+    const res = await fetch(
+      `/api/admin/events/${encodeURIComponent(slug)}/stations/${id}`,
       {
         method: 'DELETE',
-        credentials: 'same-origin',
+        credentials: 'include',
       }
     );
-    const j = await r.json();
-    if (r.ok && j.ok) {
-      await load();
-    } else {
-      alert(j.error || 'Failed to delete scanner');
+
+    if (res.status === 401) {
+      setSessionExpired(true);
+      return;
     }
+
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || !j.ok) {
+      alert(j.error || 'Failed to delete scanner');
+      return;
+    }
+
+    await loadStations();
   }
 
-  if (!authChecked) {
+  // initial load
+  useEffect(() => {
+    void loadStations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug]);
+
+  // --- render --------------------------------------------------------------
+
+  if (sessionExpired) {
     return (
-      <div className="p-4 a-card a-muted">
-        Checking admin session…
+      <div className="max-w-sm p-4 a-card a-error">
+        <div className="mb-2 font-semibold">Session expired</div>
+        <div className="mb-3 text-sm opacity-80">
+          Your admin session is no longer valid. Please log in again.
+        </div>
+        <a
+          href={loginRedirectHref()}
+          className="w-full text-center a-btn a-btn--primary"
+        >
+          Log in
+        </a>
       </div>
     );
   }
@@ -178,20 +197,18 @@ export default function AdminStationsClient({
         <button
           className="a-btn"
           onClick={() =>
-            start(() =>
-              (async () => {
-                const labels = [
-                  'Scanner 1',
-                  'Scanner 2',
-                  'Scanner 3',
-                  'Scanner 4',
-                  'Scanner 5',
-                ];
-                for (const l of labels) {
-                  await createOne(l);
-                }
-              })()
-            )
+            start(async () => {
+              const labels = [
+                'Scanner 1',
+                'Scanner 2',
+                'Scanner 3',
+                'Scanner 4',
+                'Scanner 5',
+              ];
+              for (const l of labels) {
+                await createOne(l);
+              }
+            })
           }
         >
           Create 5 quick
@@ -206,16 +223,13 @@ export default function AdminStationsClient({
           </div>
           <div className="font-mono break-all">{plainKey}</div>
           <div className="mt-1 text-xs opacity-70">
-            Share this key with the person who will scan. They’ll
-            open <code>/scan</code>, paste the key, and select the
-            event.
+            Share this key with the person who will scan. They’ll open{' '}
+            <code>/scan</code>, paste the key, and select the event.
           </div>
           <div className="mt-2">
             <button
               className="a-btn a-btn--accent"
-              onClick={() =>
-                navigator.clipboard.writeText(plainKey)
-              }
+              onClick={() => navigator.clipboard.writeText(plainKey)}
             >
               Copy
             </button>
@@ -229,7 +243,7 @@ export default function AdminStationsClient({
         </div>
       )}
 
-      {/* table */}
+      {/* table of scanners */}
       <table className="w-full a-table">
         <thead>
           <tr>
@@ -243,14 +257,10 @@ export default function AdminStationsClient({
           {rows.map((r) => (
             <tr className="a-tr" key={r.id}>
               <td className="a-td">{r.name}</td>
-              <td className="font-mono a-td">
-                {r.apiKeyMasked}
-              </td>
+              <td className="font-mono a-td">{r.apiKeyMasked}</td>
               <td className="text-sm a-td">
                 {r.lastUsedAt
-                  ? new Date(
-                      r.lastUsedAt
-                    ).toLocaleString()
+                  ? new Date(r.lastUsedAt).toLocaleString()
                   : '—'}
               </td>
               <td className="a-td">
