@@ -1,84 +1,56 @@
 // components/Admin/AdminStationsClient.tsx  (or wherever you keep it)
+// components/Admin/AdminStationsClient.tsx
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
 
-// If NEXT_PUBLIC_ADMIN_KEY is defined in Vercel at build time, it gets baked here.
-// ADMIN_KEY will NOT be available to the browser in production unless you exposed it as NEXT_PUBLIC_...
-const BAKED_ADMIN_KEY = (process.env.NEXT_PUBLIC_ADMIN_KEY || process.env.ADMIN_KEY || '').trim();
-
 type StationRow = {
   id: string;
   name: string;
-  apiKeyMasked: string;       // e.g. "code: S1 (inactive)"
-  lastUsedAt: string | null;  // currently always null
-  createdAt: string;          // ISO string
+  apiKeyMasked: string; // e.g. "code: S1 (inactive)"
+  lastUsedAt: string | null;
+  createdAt: string;
 };
 
-// pull out plaintext secret or legacy apiKey field
-const pickPlain = (j: any): string | null => j?.apiKey ?? j?.secret ?? null;
-
-export default function AdminStationsClient({ slug }: { slug: string }) {
-  // station table
+export default function AdminStationsClient({
+  slug,
+}: {
+  slug: string;
+}) {
   const [rows, setRows] = useState<StationRow[]>([]);
   const [name, setName] = useState('');
   const [plainKey, setPlainKey] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const [authChecked, setAuthChecked] = useState(false); // block UI until session check done
 
-  // admin auth state
-  // start "true" if we got a key baked into the bundle at build time, otherwise false
-  const [adminOk, setAdminOk] = useState<boolean>(!!BAKED_ADMIN_KEY);
-  const [adminKeyInput, setAdminKeyInput] = useState('');
-
-  // Check if we already have a valid admin_key cookie
-  async function checkAdminCookie() {
-    // if we baked a key in the bundle, we already consider you adminOk
-    if (BAKED_ADMIN_KEY) {
-      setAdminOk(true);
-      return;
-    }
-    try {
-      const r = await fetch('/api/admin/session', {
-        method: 'GET',
-        credentials: 'same-origin',
-        cache: 'no-store',
-      });
-      const j = await r.json().catch(() => ({}));
-      if (r.ok && j?.ok === true) {
-        setAdminOk(true);
-      } else {
-        setAdminOk(false);
-      }
-    } catch {
-      setAdminOk(false);
-    }
-  }
-
-  // Submit admin key → server validates → sets httpOnly cookie if valid
-  async function adminLoginViaCookie() {
-    if (!adminKeyInput.trim()) return;
-    const r = await fetch('/api/admin/session', {
-      method: 'POST',
+  // 1. verify admin cookie session
+  async function ensureSession() {
+    const res = await fetch('/api/admin/session', {
+      method: 'GET',
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ key: adminKeyInput.trim() }),
+      cache: 'no-store',
     });
-    const j = await r.json().catch(() => ({}));
-    if (r.ok && j?.ok) {
-      setAdminKeyInput('');
-      setAdminOk(true);
-      await load();
-    } else {
-      alert(j?.error || 'Admin login failed');
+    if (res.status === 401) {
+      // not logged in -> bounce to /login with return
+      const nextUrl = `/admin/events/${encodeURIComponent(
+        slug
+      )}/stations`;
+      window.location.href = `/login?next=${encodeURIComponent(
+        nextUrl
+      )}`;
+      return false;
     }
+    return true;
   }
 
-  // Load station list
+  // 2. load stations list
   async function load() {
     const r = await fetch(
-      `/api/admin/events/${encodeURIComponent(slug)}/stations`,
+      `/api/admin/events/${encodeURIComponent(
+        slug
+      )}/stations`,
       {
-        headers: BAKED_ADMIN_KEY ? { 'x-api-key': BAKED_ADMIN_KEY } : {},
+        method: 'GET',
         credentials: 'same-origin',
         cache: 'no-store',
       }
@@ -87,131 +59,124 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
     if (r.ok && j.ok) {
       setRows(j.stations);
     } else {
-      setRows([]);
       console.error('[stations:list]', j?.error || r.statusText);
+      alert(j?.error || 'Failed to load stations');
     }
   }
 
-  // On mount, ask server if cookie is valid (or rely on baked key)
   useEffect(() => {
-    void checkAdminCookie();
-  }, []);
+    (async () => {
+      const ok = await ensureSession();
+      if (ok) {
+        await load();
+        setAuthChecked(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug]);
 
-  // Whenever slug or admin auth changes, (re)load table
-  useEffect(() => {
-    if (adminOk) {
-      void load();
-    }
-  }, [slug, adminOk]);
-
+  // create new station
   async function createOne(label: string) {
     const r = await fetch(
-      `/api/admin/events/${encodeURIComponent(slug)}/stations`,
+      `/api/admin/events/${encodeURIComponent(
+        slug
+      )}/stations`,
       {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {
           'content-type': 'application/json',
-          ...(BAKED_ADMIN_KEY ? { 'x-api-key': BAKED_ADMIN_KEY } : {}),
         },
-        credentials: 'same-origin',
-        body: JSON.stringify({ name: label, label }),
+        body: JSON.stringify({ name: label }),
       }
     );
     const j = await r.json();
     if (r.ok && j.ok) {
-      // show the new secret one time
-      setPlainKey(pickPlain(j));
+      setPlainKey(j.secret || null); // show the one-time secret for this station
       await load();
+      setName('');
     } else {
       alert(j.error || 'Failed to create scanner');
     }
   }
 
+  // rotate station secret
   async function rotate(id: string) {
     const r = await fetch(
-      `/api/admin/events/${encodeURIComponent(slug)}/stations/${id}`,
+      `/api/admin/events/${encodeURIComponent(
+        slug
+      )}/stations/${id}`,
       {
         method: 'PATCH',
+        credentials: 'same-origin',
         headers: {
           'content-type': 'application/json',
-          ...(BAKED_ADMIN_KEY ? { 'x-api-key': BAKED_ADMIN_KEY } : {}),
         },
-        credentials: 'same-origin',
         body: JSON.stringify({ rotateSecret: true }),
       }
     );
-    const j = await r.json().catch(() => ({}));
-    if (r.ok && j?.ok) {
-      setPlainKey(pickPlain(j)); // should be { secret: "..." }
+    const j = await r.json();
+    if (r.ok && j.ok) {
+      setPlainKey(j.secret || null);
       await load();
     } else {
-      alert(j?.error || 'Failed to rotate key');
+      alert(j.error || 'Failed to rotate key');
     }
   }
 
+  // delete (soft deactivate)
   async function remove(id: string) {
-    if (!confirm('Delete scanner?')) return;
+    if (!confirm('Deactivate this scanner?')) return;
     const r = await fetch(
-      `/api/admin/events/${encodeURIComponent(slug)}/stations/${id}`,
+      `/api/admin/events/${encodeURIComponent(
+        slug
+      )}/stations/${id}`,
       {
         method: 'DELETE',
-        headers: BAKED_ADMIN_KEY ? { 'x-api-key': BAKED_ADMIN_KEY } : {},
         credentials: 'same-origin',
       }
     );
-    const j = await r.json().catch(() => ({}));
-    if (r.ok && j?.ok) {
+    const j = await r.json();
+    if (r.ok && j.ok) {
       await load();
     } else {
-      alert(j?.error || 'Failed to delete scanner');
+      alert(j.error || 'Failed to delete scanner');
     }
+  }
+
+  if (!authChecked) {
+    return (
+      <div className="p-4 a-card a-muted">
+        Checking admin session…
+      </div>
+    );
   }
 
   return (
     <div className="space-y-3">
-      {/* If we are NOT admin yet, show login strip */}
-      {!adminOk && (
-        <div className="p-3 border rounded-lg border-white/10 bg-amber-500/10">
-          <div className="mb-2 text-sm">Admin authentication required</div>
-          <div className="flex gap-2">
-            <input
-              className="a-input"
-              type="password"
-              placeholder="Enter admin key…"
-              value={adminKeyInput}
-              onChange={(e) => setAdminKeyInput(e.target.value)}
-            />
-            <button
-              className="a-btn a-btn--primary"
-              onClick={adminLoginViaCookie}
-            >
-              Sign in
-            </button>
-          </div>
-          <div className="mt-1 text-xs opacity-70">
-            We store your key in an httpOnly cookie and send it automatically.
-          </div>
-        </div>
-      )}
-
-      <div className="flex gap-2">
+      {/* Create / bulk create header */}
+      <div className="flex flex-wrap gap-2">
         <input
           className="a-input"
           placeholder="Scanner name (e.g. Scanner 1 — Ahmed)"
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
+
         <button
           className="a-btn a-btn--primary"
-          disabled={!name || pending || !adminOk}
-          onClick={() => start(() => void createOne(name))}
+          disabled={!name || pending}
+          onClick={() =>
+            start(() => {
+              void createOne(name);
+            })
+          }
         >
           Add scanner
         </button>
 
         <button
           className="a-btn"
-          disabled={pending || !adminOk}
           onClick={() =>
             start(() =>
               (async () => {
@@ -222,7 +187,9 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
                   'Scanner 4',
                   'Scanner 5',
                 ];
-                for (const l of labels) await createOne(l);
+                for (const l of labels) {
+                  await createOne(l);
+                }
               })()
             )
           }
@@ -231,6 +198,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
         </button>
       </div>
 
+      {/* one-time reveal of a secret */}
       {plainKey && (
         <div className="p-3 border rounded-lg border-white/10 bg-white/5">
           <div className="mb-1 text-sm">
@@ -238,13 +206,16 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
           </div>
           <div className="font-mono break-all">{plainKey}</div>
           <div className="mt-1 text-xs opacity-70">
-            Share this key with the guard. They’ll open <code>/scan</code>,
-            enter event slug + station code, paste this key, and arm.
+            Share this key with the person who will scan. They’ll
+            open <code>/scan</code>, paste the key, and select the
+            event.
           </div>
           <div className="mt-2">
             <button
               className="a-btn a-btn--accent"
-              onClick={() => navigator.clipboard.writeText(plainKey!)}
+              onClick={() =>
+                navigator.clipboard.writeText(plainKey)
+              }
             >
               Copy
             </button>
@@ -258,6 +229,7 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
         </div>
       )}
 
+      {/* table */}
       <table className="w-full a-table">
         <thead>
           <tr>
@@ -271,22 +243,26 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
           {rows.map((r) => (
             <tr className="a-tr" key={r.id}>
               <td className="a-td">{r.name}</td>
-              <td className="font-mono a-td">{r.apiKeyMasked}</td>
+              <td className="font-mono a-td">
+                {r.apiKeyMasked}
+              </td>
               <td className="text-sm a-td">
-                {r.lastUsedAt ? new Date(r.lastUsedAt).toLocaleString() : '—'}
+                {r.lastUsedAt
+                  ? new Date(
+                      r.lastUsedAt
+                    ).toLocaleString()
+                  : '—'}
               </td>
               <td className="a-td">
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     className="a-btn"
-                    disabled={!adminOk}
                     onClick={() => rotate(r.id)}
                   >
                     Rotate key
                   </button>
                   <button
                     className="a-btn a-btn--ghost"
-                    disabled={!adminOk}
                     onClick={() => remove(r.id)}
                   >
                     Delete
@@ -297,7 +273,10 @@ export default function AdminStationsClient({ slug }: { slug: string }) {
           ))}
           {rows.length === 0 && (
             <tr>
-              <td className="text-sm a-td opacity-70" colSpan={4}>
+              <td
+                className="text-sm a-td opacity-70"
+                colSpan={4}
+              >
                 No scanners yet.
               </td>
             </tr>

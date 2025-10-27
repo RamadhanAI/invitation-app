@@ -1,15 +1,27 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { motion, AnimatePresence, animate, useMotionValue, useTransform } from 'framer-motion';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import {
+  motion,
+  AnimatePresence,
+  animate,
+  useMotionValue,
+  useTransform,
+} from 'framer-motion';
 import Link from 'next/link';
 
 /* ------------------------------------------------------------------
    Types
------------------------------------------------------------------- */
+-------------------------------------------------------------------*/
 
 type Attendance = { total: number; attended: number; noShows: number };
-type Registration = {
+
+export type Registration = {
   email: string;
   attended: boolean;
   registeredAt: string;
@@ -22,19 +34,29 @@ type Registration = {
 };
 
 /* ------------------------------------------------------------------
-   Helpers for attendee display
------------------------------------------------------------------- */
+   Helpers for meta (name/company from CSV/meta blob)
+-------------------------------------------------------------------*/
 
 function parseMeta(meta: unknown): Record<string, unknown> {
   if (!meta) return {};
-  if (typeof meta === 'string') { try { return JSON.parse(meta) as Record<string, unknown>; } catch { return {}; } }
-  if (typeof meta === 'object' && !Array.isArray(meta)) return meta as Record<string, unknown>;
+  if (typeof meta === 'string') {
+    try {
+      return JSON.parse(meta) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  if (typeof meta === 'object' && !Array.isArray(meta)) {
+    return meta as Record<string, unknown>;
+  }
   return {};
 }
+
 function fullName(meta: unknown): string {
   const m = parseMeta(meta);
   const cands = [
-    m['fullName'], m['name'],
+    m['fullName'],
+    m['name'],
     [m['firstName'], m['lastName']].filter(Boolean).join(' '),
     [m['firstname'], m['lastname']].filter(Boolean).join(' '),
     [m['givenName'], m['familyName']].filter(Boolean).join(' '),
@@ -43,47 +65,113 @@ function fullName(meta: unknown): string {
     .filter(Boolean);
   return cands[0] || '';
 }
+
 function companyFromMeta(meta: unknown): string {
   const m = parseMeta(meta);
-  return (m['companyName'] || m['company'] || m['org'] || '').toString().trim();
+  return (
+    (m['companyName'] ||
+      m['company'] ||
+      m['org'] ||
+      '') as string
+  ).toString().trim();
 }
 
 /* ------------------------------------------------------------------
-   CountUp animated number
------------------------------------------------------------------- */
+   Animated number component for KPI cards
+-------------------------------------------------------------------*/
 
 function CountUp({ value }: { value: number }): JSX.Element {
   const mv = useMotionValue(0);
-  const fmt = useTransform(mv, (v: number) => Math.round(v).toLocaleString());
+  const fmt = useTransform(mv, (v: number) =>
+    Math.round(v).toLocaleString()
+  );
   const [text, setText] = useState<string>('0');
+
   useEffect(() => {
-    const c = animate(mv, value, { duration: 0.8, ease: [0.16, 1, 0.3, 1] });
+    const c = animate(mv, value, {
+      duration: 0.8,
+      ease: [0.16, 1, 0.3, 1],
+    });
     const off = fmt.on('change', (v) => setText(v));
-    return () => { c.stop(); off(); };
+    return () => {
+      c.stop();
+      off();
+    };
   }, [value, fmt, mv]);
-  return <span className="text-3xl font-bold">{text}</span>;
+
+  return (
+    <span className="text-3xl font-bold">{text}</span>
+  );
 }
 
 /* ------------------------------------------------------------------
-   AreaChart mini sparkline
------------------------------------------------------------------- */
+   Tiny visual area chart (cosmetic sparkline in dashboard)
+-------------------------------------------------------------------*/
 
-function AreaChart({ data, w = 520, h = 140 }: { data: number[]; w?: number; h?: number }): JSX.Element {
+function AreaChart({
+  data,
+  w = 520,
+  h = 140,
+}: {
+  data: number[];
+  w?: number;
+  h?: number;
+}): JSX.Element {
   const pad = 10;
   const max = Math.max(...data, 1);
-  const step = (w - pad * 2) / Math.max(1, data.length - 1);
-  const pts = data.map((y, i) => [pad + i * step, h - pad - (y / max) * (h - pad * 2)] as const);
-  const d = pts.map(([x, y], i) => `${i ? 'L' : 'M'} ${x} ${y}`).join(' ');
-  const poly = `${d} L ${w - pad} ${h - pad} L ${pad} ${h - pad} Z`;
+  const step =
+    (w - pad * 2) /
+    Math.max(1, data.length - 1);
+  const pts = data.map((y, i) => [
+    pad + i * step,
+    h -
+      pad -
+      (y / max) * (h - pad * 2),
+  ]) as Array<[number, number]>;
+
+  const d = pts
+    .map(
+      ([x, y], i) =>
+        `${i ? 'L' : 'M'} ${x} ${y}`
+    )
+    .join(' ');
+  const poly = `${d} L ${
+    w - pad
+  } ${h - pad} L ${pad} ${h - pad} Z`;
+
   return (
-    <svg width={w} height={h} role="img" aria-label="Check-ins (last 24h)">
+    <svg
+      width={w}
+      height={h}
+      role="img"
+      aria-label="Check-ins (last 24h)"
+    >
       <defs>
-        <linearGradient id="admGrad" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="#111827" stopOpacity=".25" />
-          <stop offset="100%" stopColor="#111827" stopOpacity=".04" />
+        <linearGradient
+          id="admGrad"
+          x1="0"
+          x2="0"
+          y1="0"
+          y2="1"
+        >
+          <stop
+            offset="0%"
+            stopColor="#111827"
+            stopOpacity=".25"
+          />
+          <stop
+            offset="100%"
+            stopColor="#111827"
+            stopOpacity=".04"
+          />
         </linearGradient>
       </defs>
-      <rect width={w} height={h} rx={14} fill="#fff" />
+      <rect
+        width={w}
+        height={h}
+        rx={14}
+        fill="#fff"
+      />
       <AnimatePresence>
         <motion.path
           key="fill"
@@ -109,9 +197,11 @@ function AreaChart({ data, w = 520, h = 140 }: { data: number[]; w?: number; h?:
 }
 
 /* ------------------------------------------------------------------
-   AdminDashboardClient
-   - Now with auth gating and cookie session, NO inline admin key
------------------------------------------------------------------- */
+   AdminDashboardClient component
+   - Handles auth gating (cookie-based admin session)
+   - If not authed, show username/password form (password == admin key)
+   - Once authed, show full dashboard UI
+-------------------------------------------------------------------*/
 
 export default function AdminDashboardClient({
   slug,
@@ -124,147 +214,293 @@ export default function AdminDashboardClient({
   attendance: Attendance;
   initialRegistrations: Registration[];
 }): JSX.Element {
-  /* ---------- auth state ---------- */
-  const [adminOk, setAdminOk] = useState<boolean | null>(null); // null = unknown/loading
-  const [loginKey, setLoginKey] = useState('');
-  const [authPending, setAuthPending] = useState(false);
+  /* ---------- AUTH STATE ---------- */
+  const [adminOk, setAdminOk] = useState<boolean | null>(
+    null
+  ); // null = checking, false = need login, true = authed
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPass, setLoginPass] = useState('');
+  const [authPending, setAuthPending] =
+    useState(false);
 
-  // check existing httpOnly session cookie
-  async function checkSession() {
+  async function checkSession(): Promise<void> {
     try {
-      const r = await fetch('/api/admin/session', {
-        method: 'GET',
-        credentials: 'same-origin',
-        cache: 'no-store',
-      });
-      const j = await r.json().catch(() => null);
-      setAdminOk(!!(r.ok && j?.ok));
+      const r = await fetch(
+        '/api/admin/session',
+        {
+          method: 'GET',
+          credentials: 'same-origin',
+          cache: 'no-store',
+        }
+      );
+      const j = await r
+        .json()
+        .catch(() => null);
+      const ok = !!(r.ok && j?.ok);
+      setAdminOk(ok);
     } catch {
       setAdminOk(false);
     }
   }
 
-  // ask server to set cookie, using admin key from form
-  async function doLogin() {
-    if (!loginKey.trim()) return;
+  async function doLogin(): Promise<void> {
+    if (!loginPass.trim()) return;
     setAuthPending(true);
     try {
-      const r = await fetch('/api/admin/session', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ key: loginKey.trim() }),
-      });
-      const j = await r.json().catch(() => null);
-      const pass = !!(r.ok && j?.ok);
-      setAdminOk(pass);
-      if (!pass) {
-        alert('Invalid admin key');
+      // NOTE: we only send the password to the server,
+      // because server is expecting { key }, i.e. admin key / shared secret.
+      // loginEmail is currently cosmetic (matches your older UX).
+      const r = await fetch(
+        '/api/admin/session',
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'content-type':
+              'application/json',
+          },
+          body: JSON.stringify({
+            key: loginPass.trim(),
+          }),
+        }
+      );
+      const j = await r
+        .json()
+        .catch(() => null);
+      const ok = !!(r.ok && j?.ok);
+      setAdminOk(ok);
+      if (!ok) {
+        alert(
+          'Invalid admin credentials'
+        );
       }
     } catch (e: any) {
-      alert(e?.message || 'Login failed');
+      alert(
+        e?.message || 'Login failed'
+      );
       setAdminOk(false);
     } finally {
       setAuthPending(false);
     }
   }
 
-  /* ---------- registration rows / filters ---------- */
-  const [rows, setRows] = useState<Registration[]>(initialRegistrations);
-  const [q, setQ] = useState<string>('');
-  const [onlyAttended, setOnlyAttended] = useState<boolean>(false);
-  const [onlyCheckedIn, setOnlyCheckedIn] = useState<boolean>(false);
-  const [pending, setPending] = useState<boolean>(false);
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    void checkSession();
+  }, []);
 
-  // filtered list
-  const filtered = useMemo<Registration[]>(() => {
+  /* ---------- REGISTRATION / DASHBOARD STATE ---------- */
+  const [rows, setRows] = useState<
+    Registration[]
+  >(initialRegistrations);
+  const [q, setQ] = useState<string>('');
+  const [onlyAttended, setOnlyAttended] =
+    useState<boolean>(false);
+  const [onlyCheckedIn, setOnlyCheckedIn] =
+    useState<boolean>(false);
+  const [pending, setPending] =
+    useState<boolean>(false);
+  const [selected, setSelected] = useState<
+    Record<string, boolean>
+  >({});
+  const fileRef =
+    useRef<HTMLInputElement | null>(null);
+
+  /* ---------- FILTERED VIEW ---------- */
+  const filtered = useMemo<
+    Registration[]
+  >(() => {
     const query = q.trim().toLowerCase();
     return rows.filter((r) => {
-      if (onlyAttended && !r.attended) return false;
-      if (onlyCheckedIn && !r.scannedAt) return false;
+      if (
+        onlyAttended &&
+        !r.attended
+      )
+        return false;
+      if (
+        onlyCheckedIn &&
+        !r.scannedAt
+      )
+        return false;
       if (!query) return true;
-      if (r.email.toLowerCase().includes(query)) return true;
-      if (r.qrToken?.toLowerCase().includes(query)) return true;
+
+      if (
+        r.email
+          .toLowerCase()
+          .includes(query)
+      )
+        return true;
+      if (
+        r.qrToken
+          ?.toLowerCase()
+          .includes(query)
+      )
+        return true;
+
       try {
-        return (r.meta ? JSON.stringify(r.meta).toLowerCase() : '').includes(query);
+        return (
+          (r.meta
+            ? JSON.stringify(
+                r.meta
+              ).toLowerCase()
+            : ''
+          ).includes(query)
+        );
       } catch {
         return false;
       }
     });
-  }, [rows, q, onlyAttended, onlyCheckedIn]);
+  }, [
+    rows,
+    q,
+    onlyAttended,
+    onlyCheckedIn,
+  ]);
 
-  const total = attendance?.total ?? rows.length;
-  const checkedIn = rows.filter((r) => r.attended).length;
-  const noShows = Math.max(0, total - checkedIn);
+  const total =
+    attendance?.total ??
+    rows.length;
+  const checkedIn = rows.filter(
+    (r) => r.attended
+  ).length;
+  const noShows = Math.max(
+    0,
+    total - checkedIn
+  );
 
-  const selectedTokens = useMemo<string[]>(
-    () => Object.entries(selected).filter(([, v]) => v).map(([k]) => k),
+  const selectedTokens = useMemo<
+    string[]
+  >(
+    () =>
+      Object.entries(selected)
+        .filter(([, v]) => v)
+        .map(([k]) => k),
     [selected]
   );
-  const someSelected: boolean = selectedTokens.length > 0;
+  const someSelected: boolean =
+    selectedTokens.length > 0;
   const allVisibleSelected: boolean =
-    filtered.length > 0 && filtered.every((r) => selected[r.qrToken]);
+    filtered.length > 0 &&
+    filtered.every(
+      (r) => selected[r.qrToken]
+    );
 
-  const toggleAllVisible = (v: boolean): void =>
+  const toggleAllVisible = (
+    v: boolean
+  ): void =>
     setSelected((prev) => {
-      const n: Record<string, boolean> = { ...prev };
-      filtered.forEach((r) => (n[r.qrToken] = v));
+      const n: Record<
+        string,
+        boolean
+      > = { ...prev };
+      filtered.forEach(
+        (r) => (n[r.qrToken] = v)
+      );
       return n;
     });
 
-  const toggleOne = (t: string): void =>
-    setSelected((p) => ({ ...p, [t]: !p[t] }));
+  const toggleOne = (
+    t: string
+  ): void =>
+    setSelected((p) => ({
+      ...p,
+      [t]: !p[t],
+    }));
 
-  /* ---------- server mutations / CSV upload ---------- */
+  /* ---------- SERVER MUTATIONS (require auth) ---------- */
 
-  // utility: attempt auth'd fetch with retry-after-login
-  async function authedFetchOnce(url: string, init: RequestInit): Promise<Response> {
-    return fetch(url, {
-      ...init,
-      credentials: 'same-origin',
-    });
-  }
-  async function authedFetch(url: string, init: RequestInit): Promise<Response> {
-    let res = await authedFetchOnce(url, init);
-    if (res.status === 401) {
-      // not authorized yet, maybe we just mounted (no cookie)? force login UI
-      setAdminOk(false);
-    }
-    return res;
-  }
-
-  async function bulkPatch(
-    body: { tokens?: string[]; attended?: boolean; checkedOut?: boolean }
-  ): Promise<void> {
+  async function bulkPatch(body: {
+    tokens?: string[];
+    attended?: boolean;
+    checkedOut?: boolean;
+  }): Promise<void> {
     if (!someSelected) return;
     setPending(true);
+
     try {
-      const res = await authedFetch(
-        `/api/admin/events/${encodeURIComponent(slug)}/registration/bulk`,
+      let res = await fetch(
+        `/api/admin/events/${encodeURIComponent(
+          slug
+        )}/registration/bulk`,
         {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...body, station: 'Admin Bulk' }),
+          credentials:
+            'same-origin',
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+          body: JSON.stringify({
+            ...body,
+            station:
+              'Admin Bulk',
+          }),
         }
       );
-      const json = (await res.json().catch(() => null)) as
-        | { ok?: boolean; rows?: Registration[]; error?: string }
-        | null;
 
-      if (!res.ok || !json?.ok) {
-        throw new Error(json?.error ?? 'Bulk action failed');
+      // If unauthorized AND we just logged in, retry once
+      if (
+        res.status === 401
+      ) {
+        await checkSession();
+        res = await fetch(
+          `/api/admin/events/${encodeURIComponent(
+            slug
+          )}/registration/bulk`,
+          {
+            method: 'PATCH',
+            credentials:
+              'same-origin',
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
+            body: JSON.stringify({
+              ...body,
+              station:
+                'Admin Bulk',
+            }),
+          }
+        );
       }
-      const updated: Registration[] = json.rows ?? [];
+
+      const json = (await res
+        .json()
+        .catch(
+          () => null
+        )) as {
+        ok?: boolean;
+        rows?: Registration[];
+        error?: string;
+      } | null;
+
+      if (
+        !res.ok ||
+        !json?.ok
+      )
+        throw new Error(
+          json?.error ??
+            'Bulk action failed'
+        );
+
+      const updated: Registration[] =
+        json.rows ?? [];
       setRows((prev) =>
         prev.map((r) => {
-          const u = updated.find((x) => x.qrToken === r.qrToken);
-          return u ? { ...r, ...u } : r;
+          const u = updated.find(
+            (x) =>
+              x.qrToken ===
+              r.qrToken
+          );
+          return u
+            ? { ...r, ...u }
+            : r;
         })
       );
     } catch (e) {
-      console.error('bulkPatch error', e);
+      console.error(
+        'bulkPatch error',
+        e
+      );
     } finally {
       setPending(false);
     }
@@ -272,68 +508,183 @@ export default function AdminDashboardClient({
 
   async function patchOne(
     token: string,
-    next: Partial<Pick<Registration, 'attended'>> & { checkedOut?: boolean }
+    next: {
+      attended?: boolean;
+      checkedOut?: boolean;
+    }
   ): Promise<void> {
     setPending(true);
     try {
-      const res = await authedFetch(
-        `/api/admin/events/${encodeURIComponent(slug)}/registration`,
+      let res = await fetch(
+        `/api/admin/events/${encodeURIComponent(
+          slug
+        )}/registration`,
         {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token, station: 'Admin UI', ...next }),
+          credentials:
+            'same-origin',
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+          body: JSON.stringify({
+            token,
+            station:
+              'Admin UI',
+            ...next,
+          }),
         }
       );
-      const json = (await res.json().catch(() => null)) as
-        | { ok?: boolean; registration: Registration; error?: string }
-        | null;
-      if (!res.ok || !json?.ok) {
-        throw new Error(json?.error ?? 'Action failed');
+
+      if (
+        res.status === 401
+      ) {
+        await checkSession();
+        res = await fetch(
+          `/api/admin/events/${encodeURIComponent(
+            slug
+          )}/registration`,
+          {
+            method: 'PATCH',
+            credentials:
+              'same-origin',
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
+            body: JSON.stringify({
+              token,
+              station:
+                'Admin UI',
+              ...next,
+            }),
+          }
+        );
       }
-      const updated = json.registration;
-      setRows((prev) => prev.map((r) => (r.qrToken === token ? { ...r, ...updated } : r)));
+
+      const json = (await res
+        .json()
+        .catch(
+          () => null
+        )) as {
+        ok?: boolean;
+        registration: Registration;
+        error?: string;
+      } | null;
+
+      if (
+        !res.ok ||
+        !json?.ok
+      )
+        throw new Error(
+          json?.error ??
+            'Action failed'
+        );
+
+      const updated =
+        json.registration;
+      setRows((prev) =>
+        prev.map((r) =>
+          r.qrToken === token
+            ? {
+                ...r,
+                ...updated,
+              }
+            : r
+        )
+      );
     } catch (e) {
-      console.error('patchOne error', e);
+      console.error(
+        'patchOne error',
+        e
+      );
     } finally {
       setPending(false);
     }
   }
 
-  async function onCsvPicked(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
-    const file = e.currentTarget.files?.[0];
+  /* ---------- CSV IMPORT/EXPORT ---------- */
+
+  const importUrlBase = `/api/admin/events/${encodeURIComponent(
+    slug
+  )}/registration/import`;
+
+  async function onCsvPicked(
+    e: React.ChangeEvent<HTMLInputElement>
+  ): Promise<void> {
+    const file =
+      e.currentTarget.files?.[0];
     if (!file) return;
     setPending(true);
+
     try {
       const fd = new FormData();
       fd.set('file', file);
 
-      const res = await authedFetch(
-        `/api/admin/events/${encodeURIComponent(slug)}/registration/import`,
+      let res = await fetch(
+        importUrlBase,
         {
           method: 'POST',
+          credentials:
+            'same-origin',
           body: fd,
         }
       );
 
-      const json = (await res.json().catch(() => null)) as
-        | { ok?: boolean; error?: string }
-        | null;
-
-      if (!res.ok || !json?.ok) {
-        throw new Error(json?.error || `Import failed (${res.status})`);
+      if (
+        res.status === 401
+      ) {
+        await checkSession();
+        res = await fetch(
+          importUrlBase,
+          {
+            method: 'POST',
+            credentials:
+              'same-origin',
+            body: fd,
+          }
+        );
       }
+
+      const json = (await res
+        .json()
+        .catch(
+          () => null
+        )) as {
+        ok?: boolean;
+        error?: string;
+      } | null;
+
+      if (
+        !res.ok ||
+        !json?.ok
+      )
+        throw new Error(
+          json?.error ||
+            `Import failed (${res.status})`
+        );
+
+      // reload to reflect imported regs
       window.location.reload();
-    } catch (err: any) {
-      alert(err?.message || 'Import failed');
+    } catch (err) {
+      alert(
+        (err as {
+          message?: string;
+        } | null)?.message ||
+          'Import failed'
+      );
     } finally {
       setPending(false);
-      if (fileRef.current) fileRef.current.value = '';
+      if (fileRef.current)
+        fileRef.current.value = '';
     }
   }
 
   function exportSelectedCsv(): void {
     if (!someSelected) return;
-    const sel = rows.filter((r) => selected[r.qrToken]);
+    const sel = rows.filter(
+      (r) => selected[r.qrToken]
+    );
     const header = [
       'name',
       'company',
@@ -347,11 +698,18 @@ export default function AdminDashboardClient({
       'qrToken',
     ];
     const esc = (v: string): string =>
-      /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+      /[",\n]/.test(v)
+        ? `"${v.replace(
+            /"/g,
+            '""'
+          )}"`
+        : v;
+
     const lines = sel.map((r) =>
       [
         fullName(r.meta) || '',
-        companyFromMeta(r.meta) || '',
+        companyFromMeta(r.meta) ||
+          '',
         r.email,
         r.attended,
         r.registeredAt,
@@ -361,14 +719,24 @@ export default function AdminDashboardClient({
         r.checkedOutBy ?? '',
         r.qrToken,
       ]
-        .map((x) => esc(String(x)))
+        .map((x) =>
+          esc(String(x))
+        )
         .join(',')
     );
-    const csv = [header.join(','), ...lines].join('\n');
+
+    const csv = [
+      header.join(','),
+      ...lines,
+    ].join('\n');
+
     const url = URL.createObjectURL(
-      new Blob([csv], { type: 'text/csv;charset=utf-8' })
+      new Blob([csv], {
+        type: 'text/csv;charset=utf-8',
+      })
     );
-    const a = document.createElement('a');
+    const a =
+      document.createElement('a');
     a.href = url;
     a.download = `registrations-selected-${new Date()
       .toISOString()
@@ -378,80 +746,144 @@ export default function AdminDashboardClient({
     URL.revokeObjectURL(url);
   }
 
-  // fake little sparkline for "Check-ins (last 24h)"
+  /* ---------- spark data for AreaChart ---------- */
   const spark = useMemo(() => {
-    const base = Math.max(6, Math.min(24, Math.round(total / 2)));
-    const arr = Array.from({ length: base }, (_, i) =>
-      Math.max(1, Math.round(((i + 1) * (checkedIn + 2)) / base))
+    // generate a smooth-ish rising series
+    const base = Math.max(
+      6,
+      Math.min(
+        24,
+        Math.round(
+          total / 2
+        )
+      )
+    );
+    const arr = Array.from(
+      { length: base },
+      (_, i) =>
+        Math.max(
+          1,
+          Math.round(
+            ((i + 1) *
+              (checkedIn + 2)) /
+              base
+          )
+        )
     );
     return arr;
   }, [total, checkedIn]);
 
-  /* ---------- lifecycle ---------- */
-  useEffect(() => {
-    void checkSession();
-  }, []);
+  /* ------------------------------------------------------------------
+     RENDER: AUTH GATE FIRST
+     adminOk === null  -> checking session
+     adminOk === false -> show login form (email+password)
+     adminOk === true  -> show full dashboard
+  -------------------------------------------------------------------*/
 
-  /* ---------- AUTH GATE UI ---------- */
   if (adminOk === null) {
-    // still checking cookie
     return (
-      <div className="p-6 a-card">
-        <div className="text-sm opacity-75">Checking admin session…</div>
+      <div className="max-w-xl p-6 a-card">
+        <div className="text-sm text-[color:var(--muted)]">
+          Checking admin session…
+        </div>
       </div>
     );
   }
 
   if (adminOk === false) {
-    // show login box BEFORE we expose attendee PII
+    // ✨ This is the login card you showed in screenshot #2
+    // We'll collect email+password, but only send password to /api/admin/session
     return (
-      <div className="max-w-sm p-6 space-y-4 a-card">
-        <div>
-          <div className="text-xl font-semibold">Admin dashboard</div>
-          <div className="text-sm opacity-70">
-            Sign in with the admin key to manage attendees and scanners.
-          </div>
+      <div className="max-w-xl p-6 mx-auto space-y-4 a-card">
+        <div className="text-lg font-semibold">
+          Admin dashboard
+        </div>
+        <div className="text-sm text-[color:var(--muted)] mb-2">
+          Sign in with the admin credentials to
+          manage attendees and scanners.
         </div>
 
-        <div className="space-y-2">
-          <input
-            type="password"
-            className="w-full a-input"
-            placeholder="Admin key"
-            value={loginKey}
-            onChange={(e) => setLoginKey(e.target.value)}
-          />
+        <div className="grid gap-3">
+          <div className="grid gap-1">
+            <label className="text-xs opacity-70">
+              Email or Username
+            </label>
+            <input
+              className="a-input"
+              placeholder="you@example.com or admin"
+              value={loginEmail}
+              onChange={(e) =>
+                setLoginEmail(
+                  e.target.value
+                )
+              }
+            />
+          </div>
+
+          <div className="grid gap-1">
+            <label className="text-xs opacity-70">
+              Password
+            </label>
+            <input
+              className="a-input"
+              type="password"
+              placeholder="••••••••"
+              value={loginPass}
+              onChange={(e) =>
+                setLoginPass(
+                  e.target.value
+                )
+              }
+            />
+          </div>
+
           <button
             className="w-full a-btn a-btn--primary"
-            disabled={authPending || !loginKey.trim()}
-            onClick={doLogin}
+            disabled={
+              authPending ||
+              !loginPass.trim()
+            }
+            onClick={() => {
+              void doLogin();
+            }}
           >
-            {authPending ? 'Signing in…' : 'Sign in'}
+            {authPending
+              ? 'Signing in…'
+              : 'Sign in'}
           </button>
-        </div>
 
-        <div className="text-[10px] opacity-60 leading-snug">
-          After you sign in, this browser will stay authorized (httpOnly cookie)
-          so scanner crew can keep working without retyping the key every minute.
+          <div className="text-[10px] text-[color:var(--muted)] leading-relaxed">
+            After you sign in, this browser
+            will stay authorized (httpOnly
+            cookie) so scanner crew can keep
+            working without retyping the key
+            every minute.
+          </div>
         </div>
       </div>
     );
   }
 
-  /* ---------- MAIN DASHBOARD UI (authorized) ---------- */
+  // adminOk === true -> FULL DASHBOARD
   return (
     <div className="space-y-6">
-      {/* Title + Header buttons */}
+      {/* Title / Header */}
       <div className="p-4 a-card md:p-6 banana-sheen-hover">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="text-xl font-semibold">{title}</div>
-            <div className="text-sm text-[color:var(--muted)]">Admin dashboard</div>
+            <div className="text-xl font-semibold">
+              {title}
+            </div>
+            <div className="text-sm text-[color:var(--muted)]">
+              Admin dashboard
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Link
               className="a-btn a-btn--accent"
-              href={`/admin/events/${encodeURIComponent(slug)}/stations`}
+              href={`/admin/events/${encodeURIComponent(
+                slug
+              )}/stations`}
             >
               Manage Scanners
             </Link>
@@ -469,41 +901,81 @@ export default function AdminDashboardClient({
       <div className="p-4 a-card md:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold">CSV In & Out</div>
+            <div className="text-sm font-semibold">
+              CSV In & Out
+            </div>
             <div className="text-xs text-[color:var(--muted)]">
-              Import columns: <code>email</code> (required), <code>price</code>,{' '}
-              <code>firstName</code>, <code>lastName</code>,{' '}
-              <code>companyName</code>, <code>jobTitle</code>, …
+              Import columns:{' '}
+              <code>
+                email
+              </code>{' '}
+              (required),{' '}
+              <code>
+                price
+              </code>
+              ,{' '}
+              <code>
+                firstName
+              </code>
+              ,{' '}
+              <code>
+                lastName
+              </code>
+              ,{' '}
+              <code>
+                companyName
+              </code>
+              ,{' '}
+              <code>
+                jobTitle
+              </code>
+              , …
             </div>
           </div>
           <a
             className="a-btn a-btn--ghost"
-            href={`/admin/api/events/${encodeURIComponent(slug)}/export.csv`}
+            href={`/admin/api/events/${encodeURIComponent(
+              slug
+            )}/export.csv`}
           >
             Export CSV
           </a>
         </div>
+
         <div className="flex items-center gap-3 mt-3">
           <input
             ref={fileRef}
             type="file"
             accept=".csv"
-            onChange={(e): void => {
-              void onCsvPicked(e);
+            onChange={(
+              e
+            ): void => {
+              void onCsvPicked(
+                e
+              );
             }}
             className="a-input-file"
           />
           <button
             className="a-btn"
-            onClick={(): void => fileRef.current?.click()}
+            onClick={(): void =>
+              fileRef.current?.click()
+            }
           >
             Choose File
           </button>
           <button
             className="a-btn a-btn--primary"
             onClick={(): void => {
-              if (fileRef.current?.files?.[0])
-                void onCsvPicked({ currentTarget: fileRef.current } as any);
+              if (
+                fileRef
+                  .current
+                  ?.files?.[0]
+              )
+                void onCsvPicked({
+                  currentTarget:
+                    fileRef.current,
+                } as any);
             }}
           >
             Import CSV
@@ -514,25 +986,48 @@ export default function AdminDashboardClient({
       {/* KPI cards */}
       <motion.div
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.45 }}
+        initial={{
+          opacity: 0,
+          y: 8,
+        }}
+        animate={{
+          opacity: 1,
+          y: 0,
+        }}
+        transition={{
+          duration: 0.45,
+        }}
       >
         <div className="p-4 a-card banana-sheen-hover">
-          <div className="text-xs text-[color:var(--muted)]">TOTAL REGISTRATIONS</div>
+          <div className="text-xs text-[color:var(--muted)]">
+            TOTAL REGISTRATIONS
+          </div>
           <CountUp value={total} />
         </div>
+
         <div className="p-4 a-card banana-sheen-hover">
-          <div className="text-xs text-[color:var(--muted)]">CHECKED-IN</div>
-          <CountUp value={checkedIn} />
+          <div className="text-xs text-[color:var(--muted)]">
+            CHECKED-IN
+          </div>
+          <CountUp
+            value={checkedIn}
+          />
         </div>
+
         <div className="p-4 a-card banana-sheen-hover">
-          <div className="text-xs text-[color:var(--muted)]">PAID</div>
+          <div className="text-xs text-[color:var(--muted)]">
+            PAID
+          </div>
           <CountUp value={total} />
         </div>
+
         <div className="p-4 a-card banana-sheen-hover">
-          <div className="text-xs text-[color:var(--muted)]">NO-SHOWS</div>
-          <CountUp value={noShows} />
+          <div className="text-xs text-[color:var(--muted)]">
+            NO-SHOWS
+          </div>
+          <CountUp
+            value={noShows}
+          />
         </div>
       </motion.div>
 
@@ -541,87 +1036,149 @@ export default function AdminDashboardClient({
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="p-4 a-card banana-sheen-hover md:col-span-2">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-sm font-medium">Check-ins (last 24h)</div>
-              <div className="text-xs text-[color:var(--muted)]">live</div>
+              <div className="text-sm font-medium">
+                Check-ins (last
+                24h)
+              </div>
+              <div className="text-xs text-[color:var(--muted)]">
+                live
+              </div>
             </div>
             <div className="overflow-hidden rounded-xl border border-[color:var(--line)] bg-white">
-              <AreaChart data={spark} />
+              <AreaChart
+                data={spark}
+              />
             </div>
           </div>
 
           <div className="p-4 a-card banana-sheen-hover">
-            <div className="mb-2 text-sm font-medium">Action Center</div>
+            <div className="mb-2 text-sm font-medium">
+              Action Center
+            </div>
 
             <button
               className="w-full mb-2 a-btn a-btn--accent"
-              disabled={!someSelected || pending}
+              disabled={
+                !someSelected ||
+                pending
+              }
               onClick={(): void => {
                 void bulkPatch({
-                  tokens: selectedTokens,
+                  tokens:
+                    selectedTokens,
                   attended: true,
                   checkedOut: false,
                 });
               }}
             >
-              Mark selected as Paid
+              Mark selected as
+              Paid
             </button>
 
             <div className="grid grid-cols-2 gap-2">
               <button
                 className="w-full a-btn"
-                disabled={!someSelected || pending}
+                disabled={
+                  !someSelected ||
+                  pending
+                }
                 onClick={(): void => {
                   void bulkPatch({
-                    tokens: selectedTokens,
+                    tokens:
+                      selectedTokens,
                     attended: true,
                     checkedOut: false,
                   });
                 }}
+                title="Mark selected Attended"
               >
-                Mark selected Attended
+                Mark selected
+                Attended
               </button>
+
               <button
                 className="w-full a-btn a-btn--ghost"
-                disabled={!someSelected || pending}
+                disabled={
+                  !someSelected ||
+                  pending
+                }
                 onClick={(): void => {
                   void bulkPatch({
-                    tokens: selectedTokens,
+                    tokens:
+                      selectedTokens,
                     attended: false,
                   });
                 }}
+                title="Remove from Attendance"
               >
-                Remove from Attendance
+                Remove from
+                Attendance
               </button>
             </div>
 
             <button
               className="w-full mt-2 a-btn"
-              disabled={!someSelected || pending}
-              onClick={(): void => exportSelectedCsv()}
+              disabled={
+                !someSelected ||
+                pending
+              }
+              onClick={(): void =>
+                exportSelectedCsv()
+              }
             >
-              Export Selected (CSV)
+              Export Selected
+              (CSV)
             </button>
 
             <div className="mt-4">
-              <div className="mb-2 text-sm font-medium">CSV In & Out</div>
+              <div className="mb-2 text-sm font-medium">
+                CSV In & Out
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   className="w-full a-btn"
-                  onClick={(): void => fileRef.current?.click()}
+                  onClick={(): void =>
+                    fileRef.current?.click()
+                  }
                 >
                   Import CSV
                 </button>
                 <a
-                  className="w-full a-btn a-btn--ghost"
-                  href={`/admin/api/events/${encodeURIComponent(slug)}/export.csv`}
+                  className="w-full text-center a-btn a-btn--ghost whitespace-nowrap"
+                  href={`/admin/api/events/${encodeURIComponent(
+                    slug
+                  )}/export.csv`}
                 >
-                  Export All (CSV)
+                  Export All
+                  (CSV)
                 </a>
               </div>
               <div className="mt-2 text-xs text-[color:var(--muted)]">
-                CSV must include <code>email</code>. Optional: <code>price</code>,{' '}
-                <code>firstName</code>, <code>lastName</code>,{' '}
-                <code>companyName</code>, <code>jobTitle</code>, …
+                CSV must include{' '}
+                <code>
+                  email
+                </code>
+                . Optional:{' '}
+                <code>
+                  price
+                </code>
+                ,{' '}
+                <code>
+                  firstName
+                </code>
+                ,{' '}
+                <code>
+                  lastName
+                </code>
+                ,{' '}
+                <code>
+                  companyName
+                </code>
+                ,{' '}
+                <code>
+                  jobTitle
+                </code>
+                , …
               </div>
             </div>
           </div>
@@ -636,31 +1193,57 @@ export default function AdminDashboardClient({
             className="a-input"
             placeholder="Search name, email, token, scanner, or meta…"
             value={q}
-            onChange={(e) => setQ(e.currentTarget.value)}
+            onChange={(e) =>
+              setQ(
+                e.currentTarget
+                  .value
+              )
+            }
           />
+
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
-              checked={onlyAttended}
-              onChange={(e) => setOnlyAttended(e.currentTarget.checked)}
+              checked={
+                onlyAttended
+              }
+              onChange={(e) =>
+                setOnlyAttended(
+                  e.currentTarget
+                    .checked
+                )
+              }
             />
             Only attended
           </label>
+
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
-              checked={onlyCheckedIn}
-              onChange={(e) => setOnlyCheckedIn(e.currentTarget.checked)}
+              checked={
+                onlyCheckedIn
+              }
+              onChange={(e) =>
+                setOnlyCheckedIn(
+                  e.currentTarget
+                    .checked
+                )
+              }
             />
             Only checked-in
           </label>
+
           <div className="ml-auto">
             <button
               className="a-btn a-btn--ghost"
               onClick={(): void => {
                 setQ('');
-                setOnlyAttended(false);
-                setOnlyCheckedIn(false);
+                setOnlyAttended(
+                  false
+                );
+                setOnlyCheckedIn(
+                  false
+                );
               }}
             >
               Clear
@@ -678,144 +1261,258 @@ export default function AdminDashboardClient({
                 <th className="a-th">
                   <input
                     type="checkbox"
-                    checked={allVisibleSelected}
-                    onChange={(e): void => toggleAllVisible(e.currentTarget.checked)}
+                    checked={
+                      allVisibleSelected
+                    }
+                    onChange={(e): void =>
+                      toggleAllVisible(
+                        e
+                          .currentTarget
+                          .checked
+                      )
+                    }
                   />
                 </th>
-                <th className="a-th a-col-name">Name / Company</th>
-                <th className="a-th a-col-email">Email</th>
-                <th className="a-th a-col-attended">Attended</th>
-                <th className="a-th a-col-datetime">Registered</th>
-                <th className="a-th a-col-datetime">Scanned</th>
-                <th className="a-th">Scanned By</th>
-                <th className="a-th a-col-datetime">Checked-out</th>
-                <th className="a-th a-col-actions">Actions</th>
+                <th className="a-th a-col-name">
+                  Name /
+                  Company
+                </th>
+                <th className="a-th a-col-email">
+                  Email
+                </th>
+                <th className="a-th a-col-attended">
+                  Attended
+                </th>
+                <th className="a-th a-col-datetime">
+                  Registered
+                </th>
+                <th className="a-th a-col-datetime">
+                  Scanned
+                </th>
+                <th className="a-th">
+                  Scanned By
+                </th>
+                <th className="a-th a-col-datetime">
+                  Checked-out
+                </th>
+                <th className="a-th a-col-actions">
+                  Actions
+                </th>
               </tr>
             </thead>
+
             <tbody>
-              {filtered.length === 0 && (
+              {filtered.length ===
+                0 && (
                 <tr className="a-tr">
-                  <td className="text-gray-500 a-td" colSpan={9}>
-                    No results.
+                  <td
+                    className="text-gray-500 a-td"
+                    colSpan={
+                      9
+                    }
+                  >
+                    No
+                    results.
                   </td>
                 </tr>
               )}
-              {filtered.map((r) => {
-                const canRemove = r.attended;
-                const canCheckout = r.attended && !r.checkedOutAt;
-                return (
-                  <tr key={r.qrToken} className="a-tr">
-                    <td className="a-td">
-                      <input
-                        type="checkbox"
-                        checked={!!selected[r.qrToken]}
-                        onChange={(): void => toggleOne(r.qrToken)}
-                      />
-                    </td>
-                    <td className="a-td a-col-name">
-                      <div className="font-medium cell-wrap">
-                        {fullName(r.meta) || '—'}
-                      </div>
-                      {companyFromMeta(r.meta) && (
-                        <div className="text-xs text-[color:var(--muted)] cell-wrap">
-                          {companyFromMeta(r.meta)}
+
+              {filtered.map(
+                (r) => {
+                  const canRemove =
+                    r.attended;
+                  const canCheckout =
+                    r.attended &&
+                    !r.checkedOutAt;
+
+                  return (
+                    <tr
+                      key={
+                        r.qrToken
+                      }
+                      className="a-tr"
+                    >
+                      <td className="a-td">
+                        <input
+                          type="checkbox"
+                          checked={
+                            !!selected[
+                              r
+                                .qrToken
+                            ]
+                          }
+                          onChange={(): void =>
+                            toggleOne(
+                              r.qrToken
+                            )
+                          }
+                        />
+                      </td>
+
+                      <td className="a-td a-col-name">
+                        <div className="font-medium cell-wrap">
+                          {fullName(
+                            r.meta
+                          ) ||
+                            '—'}
                         </div>
-                      )}
-                    </td>
-                    <td className="a-td a-col-email">
-                      <div className="font-mono cell-ellipsis">{r.email}</div>
-                    </td>
-                    <td className="a-td a-col-attended">
-                      {r.attended ? 'Yes' : 'No'}
-                    </td>
-                    <td className="a-td a-col-datetime">
-                      <div className="cell-ellipsis">
-                        {new Date(r.registeredAt).toLocaleString()}
-                      </div>
-                    </td>
-                    <td className="a-td a-col-datetime">
-                      <div className="cell-ellipsis">
-                        {r.scannedAt
-                          ? new Date(r.scannedAt).toLocaleString()
-                          : '—'}
-                      </div>
-                    </td>
-                    <td className="a-td">
-                      <div className="cell-ellipsis">{r.scannedBy || '—'}</div>
-                    </td>
-                    <td className="a-td a-col-datetime">
-                      <div className="cell-ellipsis">
-                        {r.checkedOutAt
-                          ? new Date(r.checkedOutAt).toLocaleString()
-                          : '—'}
-                      </div>
-                    </td>
-                    <td className="a-td a-col-actions">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          className="a-btn"
-                          disabled={pending || r.attended}
-                          onClick={(): void => {
-                            void patchOne(r.qrToken, {
-                              attended: true,
-                              checkedOut: false,
-                            });
-                          }}
-                          title={
-                            r.attended
-                              ? 'Already attended'
-                              : 'Mark Attended'
-                          }
-                        >
-                          Mark Attended
-                        </button>
+                        {companyFromMeta(
+                          r.meta
+                        ) && (
+                          <div className="text-xs text-[color:var(--muted)] cell-wrap">
+                            {companyFromMeta(
+                              r.meta
+                            )}
+                          </div>
+                        )}
+                      </td>
 
-                        <button
-                          className="a-btn a-btn--ghost"
-                          disabled={pending || !canRemove}
-                          onClick={(): void => {
-                            void patchOne(r.qrToken, { attended: false });
-                          }}
-                          title={
-                            !canRemove
-                              ? 'Not attended yet'
-                              : 'Remove from Attendance'
+                      <td className="a-td a-col-email">
+                        <div className="font-mono cell-ellipsis">
+                          {
+                            r.email
                           }
-                        >
-                          Remove from Attendance
-                        </button>
+                        </div>
+                      </td>
 
-                        <button
-                          className="a-btn"
-                          disabled={pending || !canCheckout}
-                          onClick={(): void => {
-                            void patchOne(r.qrToken, { checkedOut: true });
-                          }}
-                          title={
-                            !canCheckout
-                              ? 'Must be attended and not already checked out'
-                              : 'Check-out'
-                          }
-                        >
-                          Check-out
-                        </button>
+                      <td className="a-td a-col-attended">
+                        {r.attended
+                          ? 'Yes'
+                          : 'No'}
+                      </td>
 
-                        <a
-                          className="a-btn a-btn--ghost whitespace-nowrap min-w-[7.5rem] text-center"
-                          href={`/t/${encodeURIComponent(
-                            r.qrToken
-                          )}?view=badge`}
-                          target="_blank"
-                          rel="noreferrer"
-                          title="View ticket (badge)"
-                        >
-                          View Ticket
-                        </a>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                      <td className="a-td a-col-datetime">
+                        <div className="cell-ellipsis">
+                          {new Date(
+                            r.registeredAt
+                          ).toLocaleString()}
+                        </div>
+                      </td>
+
+                      <td className="a-td a-col-datetime">
+                        <div className="cell-ellipsis">
+                          {r.scannedAt
+                            ? new Date(
+                                r.scannedAt
+                              ).toLocaleString()
+                            : '—'}
+                        </div>
+                      </td>
+
+                      <td className="a-td">
+                        <div className="cell-ellipsis">
+                          {r.scannedBy ||
+                            '—'}
+                        </div>
+                      </td>
+
+                      <td className="a-td a-col-datetime">
+                        <div className="cell-ellipsis">
+                          {r.checkedOutAt
+                            ? new Date(
+                                r.checkedOutAt
+                              ).toLocaleString()
+                            : '—'}
+                        </div>
+                      </td>
+
+                      <td className="a-td a-col-actions">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            className="a-btn"
+                            disabled={
+                              pending ||
+                              r.attended
+                            }
+                            onClick={(): void => {
+                              void patchOne(
+                                r.qrToken,
+                                {
+                                  attended:
+                                    true,
+                                  checkedOut:
+                                    false,
+                                }
+                              );
+                            }}
+                            title={
+                              r.attended
+                                ? 'Already attended'
+                                : 'Mark Attended'
+                            }
+                          >
+                            Mark
+                            Attended
+                          </button>
+
+                          <button
+                            className="a-btn a-btn--ghost"
+                            disabled={
+                              pending ||
+                              !canRemove
+                            }
+                            onClick={(): void => {
+                              void patchOne(
+                                r.qrToken,
+                                {
+                                  attended:
+                                    false,
+                                }
+                              );
+                            }}
+                            title={
+                              !canRemove
+                                ? 'Not attended yet'
+                                : 'Remove from Attendance'
+                            }
+                          >
+                            Remove
+                            from
+                            Attendance
+                          </button>
+
+                          <button
+                            className="a-btn"
+                            disabled={
+                              pending ||
+                              !canCheckout
+                            }
+                            onClick={(): void => {
+                              void patchOne(
+                                r.qrToken,
+                                {
+                                  checkedOut:
+                                    true,
+                                }
+                              );
+                            }}
+                            title={
+                              !canCheckout
+                                ? 'Must be attended and not already checked out'
+                                : 'Check-out'
+                            }
+                          >
+                            Check-out
+                          </button>
+
+                          <a
+                            className="a-btn a-btn--ghost whitespace-nowrap min-w-[7.5rem] text-center"
+                            href={`/t/${encodeURIComponent(
+                              r.qrToken
+                            )}?view=badge`}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="View ticket (badge)"
+                          >
+                            View
+                            Ticket
+                          </a>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
+              )}
             </tbody>
           </table>
         </div>

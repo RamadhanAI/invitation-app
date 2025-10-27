@@ -1,7 +1,8 @@
 // app/admin/events/[slug]/page.tsx
-// app/admin/events/[slug]/page.tsx
 import dynamicImport from 'next/dynamic';
 import { prisma } from '@/lib/db';
+import { readAdminSessionFromCookies } from '@/lib/adminAuth';
+import { redirect } from 'next/navigation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,7 +21,6 @@ type RegistrationDTO = {
   meta: unknown;
 };
 
-// ✅ dynamic<T> expects the PROPS type T, not ComponentType<T>
 type AdminProps = {
   slug: string;
   title: string;
@@ -30,16 +30,29 @@ type AdminProps = {
 
 const AdminDashboardClient = dynamicImport<AdminProps>(
   () =>
-    import('@/app/admin/[slug]/AdminDashboardClient').then(m => m.default),
+    import('@/app/admin/[slug]/AdminDashboardClient').then(
+      (m) => m.default
+    ),
   { ssr: false }
 );
 
 export default async function Page({ params }: { params: { slug: string } }) {
+  // server-side auth check
+  const sess = readAdminSessionFromCookies();
+  if (!sess) {
+    redirect(
+      `/login?next=${encodeURIComponent(
+        `/admin/events/${params.slug}`
+      )}`
+    );
+  }
+
   const event = await prisma.event.findUnique({
     where: { slug: params.slug },
     select: { id: true, title: true, slug: true },
   });
-  if (!event) return <div className="p-4 a-card">Event not found.</div>;
+  if (!event)
+    return <div className="p-4 a-card">Event not found.</div>;
 
   const regsDb = await prisma.registration.findMany({
     where: { eventId: event.id },
@@ -57,28 +70,38 @@ export default async function Page({ params }: { params: { slug: string } }) {
     },
   });
 
-  const initialRegistrations: RegistrationDTO[] = regsDb.map(r => ({
+  const initialRegistrations: RegistrationDTO[] = regsDb.map((r) => ({
     email: r.email,
     attended: r.attended,
     registeredAt: r.registeredAt.toISOString(),
     scannedAt: r.scannedAt ? r.scannedAt.toISOString() : null,
     scannedBy: r.scannedBy ?? null,
-    checkedOutAt: r.checkedOutAt ? r.checkedOutAt.toISOString() : null,
+    checkedOutAt: r.checkedOutAt
+      ? r.checkedOutAt.toISOString()
+      : null,
     checkedOutBy: r.checkedOutBy ?? null,
     qrToken: r.qrToken,
     meta: r.meta,
   }));
 
   const [total, attended] = await Promise.all([
-    prisma.registration.count({ where: { eventId: event.id } }),
-    prisma.registration.count({ where: { eventId: event.id, attended: true } }),
+    prisma.registration.count({
+      where: { eventId: event.id },
+    }),
+    prisma.registration.count({
+      where: { eventId: event.id, attended: true },
+    }),
   ]);
 
   return (
     <AdminDashboardClient
       slug={event.slug}
       title={event.title}
-      attendance={{ total, attended, noShows: Math.max(0, total - attended) }}
+      attendance={{
+        total,
+        attended,
+        noShows: Math.max(0, total - attended),
+      }}
       initialRegistrations={initialRegistrations}
     />
   );

@@ -1,63 +1,49 @@
 // app/api/admin/events/[slug]/stations/route.ts
+// app/api/admin/events/[slug]/stations/route.ts
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { headers, cookies } from 'next/headers';
 import { prisma } from '@/lib/db';
+import { requireAdminForSlug } from '@/lib/adminAuth';
 import * as crypto from 'node:crypto';
 import { hashSecret } from '@/lib/password';
 
-const ok = (data: any) => NextResponse.json({ ok: true, ...data });
-const bad = (msg: string, code = 400) =>
-  NextResponse.json({ error: msg }, { status: code });
-
-// generate a URL-safe secret without relying on .toString('base64url')
-function generatePlainSecret() {
-  return crypto
-    .randomBytes(24)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-}
-
-// auth gate: accept either x-api-key header OR the admin_key cookie
-async function gate(slug: string) {
-  const hdrs = headers();
-  const headerKey = hdrs.get('x-api-key') || '';
-  const cookieKey = cookies().get('admin_key')?.value || '';
-  const candidateKey = (headerKey || cookieKey || '').trim();
-
-  const event = await prisma.event.findUnique({
-    where: { slug },
-    select: { id: true, organizer: { select: { apiKey: true } } },
-  });
-  if (!event) return { event: null, pass: false };
-
-  const globalKey = (process.env.NEXT_PUBLIC_ADMIN_KEY ||
-    process.env.ADMIN_KEY ||
-    ''
-  ).trim();
-
-  const pass =
-    !!candidateKey &&
-    (candidateKey === globalKey ||
-      candidateKey === (event.organizer?.apiKey || ''));
-
-  return { event, pass };
+function maskStation(row: {
+  id: string;
+  name: string;
+  code: string;
+  active: boolean;
+  createdAt: Date;
+}) {
+  return {
+    id: row.id,
+    name: row.name,
+    apiKeyMasked: `code: ${row.code}${
+      row.active ? '' : ' (inactive)'
+    }`,
+    lastUsedAt: null, // (placeholder for future analytics)
+    createdAt: row.createdAt.toISOString(),
+  };
 }
 
 // GET /api/admin/events/[slug]/stations
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: { slug: string } }
 ) {
-  const { event, pass } = await gate(params.slug);
-  if (!event || !pass) return bad('Unauthorized', 401);
+  const gate = await requireAdminForSlug(req, params.slug);
+  if (!gate.ok) {
+    return NextResponse.json(
+      { error: gate.error },
+      { status: gate.status }
+    );
+  }
 
   const stations = await prisma.station.findMany({
-    where: { eventId: event.id },
-    orderBy: { createdAt: 'asc' },
+    where: { eventId: gate.eventId },
+    orderBy: [{ createdAt: 'asc' }],
     select: {
       id: true,
       name: true,
@@ -67,43 +53,62 @@ export async function GET(
     },
   });
 
-  const rows = stations.map((s) => ({
-    id: s.id,
-    name: s.name,
-    apiKeyMasked: `code: ${s.code}${s.active ? '' : ' (inactive)'}`,
-    lastUsedAt: null as string | null, // you don't track this yet
-    createdAt: s.createdAt.toISOString(),
-  }));
-
-  return ok({ stations: rows });
+  return NextResponse.json({
+    ok: true,
+    stations: stations.map(maskStation),
+  });
 }
 
 // POST /api/admin/events/[slug]/stations
+// body: { name: string }
 export async function POST(
   req: Request,
   { params }: { params: { slug: string } }
 ) {
-  const { event, pass } = await gate(params.slug);
-  if (!event || !pass) return bad('Unauthorized', 401);
+  const gate = await requireAdminForSlug(req, params.slug);
+  if (!gate.ok) {
+    return NextResponse.json(
+      { error: gate.error },
+      { status: gate.status }
+    );
+  }
 
-  const body = await req.json().catch(() => ({} as any));
-  const label = (body.name ?? body.label ?? '').trim();
-  if (!label) return bad('Missing station name');
+  let body: any = {};
+  const ct = req.headers.get('content-type') || '';
+  if (ct.includes('application/json')) {
+    body = await req.json().catch(() => ({}));
+  } else if (
+    ct.includes('application/x-www-form-urlencoded') ||
+    ct.includes('multipart/form-data')
+  ) {
+    const fd = await req.formData();
+    body = Object.fromEntries(fd.entries());
+  }
 
-  // choose next code like "S1", "S2", ...
+  const rawName = (body.name ?? body.label ?? '').toString().trim();
+  if (!rawName) {
+    return NextResponse.json(
+      { error: 'Missing scanner name' },
+      { status: 400 }
+    );
+  }
+
+  // pick next code "S<number>"
   const count = await prisma.station.count({
-    where: { eventId: event.id },
+    where: { eventId: gate.eventId },
   });
   const code = `S${count + 1}`;
 
-  // new one-time secret
-  const secretPlain = generatePlainSecret();
+  // generate secret
+  const secretPlain = crypto
+    .randomBytes(24)
+    .toString('base64url');
   const secretHash = await hashSecret(secretPlain);
 
-  const station = await prisma.station.create({
+  const st = await prisma.station.create({
     data: {
-      eventId: event.id,
-      name: label,
+      eventId: gate.eventId,
+      name: rawName,
       code,
       secretHash,
       active: true,
@@ -117,15 +122,14 @@ export async function POST(
     },
   });
 
-  return ok({
-    station: {
-      id: station.id,
-      name: station.name,
-      code: station.code,
-      active: station.active,
-      createdAt: station.createdAt.toISOString(),
-    },
-    // plaintext secret only comes back once
-    secret: secretPlain,
+  return NextResponse.json({
+    ok: true,
+    station: maskStation(st),
+    secret: secretPlain, // ← show once so you can share with door staff
   });
+}
+
+// Preflight
+export function OPTIONS() {
+  return new Response(null, { status: 204 });
 }

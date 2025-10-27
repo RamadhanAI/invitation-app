@@ -1,115 +1,131 @@
 // app/api/admin/events/[slug]/stations/[id]/route.ts
+// app/api/admin/events/[slug]/stations/[id]/route.ts
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { headers, cookies } from 'next/headers';
+import { requireAdminForSlug } from '@/lib/adminAuth';
 import * as crypto from 'node:crypto';
 import { hashSecret } from '@/lib/password';
 
-const ok = (data: any) => NextResponse.json({ ok: true, ...data });
-const bad = (msg: string, code = 400) =>
-  NextResponse.json({ error: msg }, { status: code });
-
-function generatePlainSecret() {
-  return crypto
-    .randomBytes(24)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
+function bad(msg: string, code = 400) {
+  return NextResponse.json({ error: msg }, { status: code });
 }
-
-async function gate(slug: string) {
-  const hdrs = headers();
-  const headerKey = hdrs.get('x-api-key') || '';
-  const cookieKey = cookies().get('admin_key')?.value || '';
-  const candidateKey = (headerKey || cookieKey || '').trim();
-
-  const event = await prisma.event.findUnique({
-    where: { slug },
-    select: { id: true, organizer: { select: { apiKey: true } } },
-  });
-  if (!event) return { event: null, pass: false };
-
-  const globalKey = (
-    process.env.NEXT_PUBLIC_ADMIN_KEY ||
-    process.env.ADMIN_KEY ||
-    ''
-  ).trim();
-
-  const pass =
-    !!candidateKey &&
-    (candidateKey === globalKey ||
-      candidateKey === (event.organizer?.apiKey || ''));
-
-  return { event, pass };
+function ok(data: any) {
+  return NextResponse.json({ ok: true, ...data });
 }
 
 // PATCH /api/admin/events/[slug]/stations/[id]
 export async function PATCH(
   req: Request,
-  { params }: { params: { slug: string; id: string } }
+  {
+    params,
+  }: { params: { slug: string; id: string } }
 ) {
-  const { event, pass } = await gate(params.slug);
-  if (!event || !pass) return bad('Unauthorized', 401);
+  const gate = await requireAdminForSlug(req, params.slug);
+  if (!gate.ok) {
+    return NextResponse.json(
+      { error: gate.error },
+      { status: gate.status }
+    );
+  }
 
-  const body = (await req.json().catch(() => null)) as {
-    rotateSecret?: boolean;
-    name?: string;
-    code?: string;
-    active?: boolean;
-  } | null;
+  // parse body
+  let body: any = {};
+  const ct = req.headers.get('content-type') || '';
+  if (ct.includes('application/json')) {
+    body = await req.json().catch(() => ({}));
+  } else if (
+    ct.includes('application/x-www-form-urlencoded') ||
+    ct.includes('multipart/form-data')
+  ) {
+    const fd = await req.formData();
+    body = Object.fromEntries(fd.entries());
+  }
 
-  // Ensure station belongs to this event
+  // ensure station belongs to that event
   const st = await prisma.station.findUnique({
     where: { id: params.id },
     select: { id: true, eventId: true },
   });
-  if (!st || st.eventId !== event.id) return bad('Not found', 404);
+  if (!st || st.eventId !== gate.eventId) {
+    return bad('Not found', 404);
+  }
 
-  // Handle rotate
-  if (body?.rotateSecret) {
-    const secretPlain = generatePlainSecret();
+  // rotateSecret?
+  if (body.rotateSecret) {
+    const secretPlain = crypto
+      .randomBytes(24)
+      .toString('base64url');
     const secretHash = await hashSecret(secretPlain);
+
     await prisma.station.update({
       where: { id: st.id },
       data: { secretHash },
     });
+
     return ok({ secret: secretPlain });
   }
 
-  // Handle rename / recode / toggle active
+  // rename / toggle active / change code
   const data: any = {};
-  if (typeof body?.name === 'string') data.name = body.name.trim();
-  if (typeof body?.code === 'string') data.code = body.code.trim();
-  if (typeof body?.active === 'boolean') data.active = body.active;
+  if (typeof body.name === 'string') {
+    data.name = body.name.trim();
+  }
+  if (typeof body.code === 'string') {
+    data.code = body.code.trim();
+  }
+  if (typeof body.active === 'string') {
+    // "true"/"false" from formdata
+    data.active = body.active === 'true';
+  } else if (typeof body.active === 'boolean') {
+    data.active = body.active;
+  }
 
-  if (!Object.keys(data).length) return bad('Nothing to update');
+  if (!Object.keys(data).length) {
+    return bad('Nothing to update');
+  }
 
-  const station = await prisma.station.update({
+  const updated = await prisma.station.update({
     where: { id: st.id },
     data,
-    select: { id: true, name: true, code: true, active: true, createdAt: true },
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      active: true,
+      createdAt: true,
+    },
   });
 
-  return ok({ station });
+  return ok({ station: updated });
 }
 
 // DELETE /api/admin/events/[slug]/stations/[id]
 export async function DELETE(
-  _req: Request,
-  { params }: { params: { slug: string; id: string } }
+  req: Request,
+  {
+    params,
+  }: { params: { slug: string; id: string } }
 ) {
-  const { event, pass } = await gate(params.slug);
-  if (!event || !pass) return bad('Unauthorized', 401);
+  const gate = await requireAdminForSlug(req, params.slug);
+  if (!gate.ok) {
+    return NextResponse.json(
+      { error: gate.error },
+      { status: gate.status }
+    );
+  }
 
-  // Soft-delete: set active=false
+  // soft delete => set active=false
   const st = await prisma.station.findUnique({
     where: { id: params.id },
     select: { id: true, eventId: true },
   });
-  if (!st || st.eventId !== event.id) return bad('Not found', 404);
+  if (!st || st.eventId !== gate.eventId) {
+    return bad('Not found', 404);
+  }
 
   await prisma.station.update({
     where: { id: st.id },
@@ -117,4 +133,9 @@ export async function DELETE(
   });
 
   return ok({ deleted: true });
+}
+
+// Preflight
+export function OPTIONS() {
+  return new Response(null, { status: 204 });
 }
