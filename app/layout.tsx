@@ -1,5 +1,5 @@
 // app/layout.tsx
-// app/layout.tsx  (only the helper changed)
+// app/layout.tsx
 import './globals.css';
 import type { Metadata } from 'next';
 import NextDynamic from 'next/dynamic';
@@ -31,7 +31,7 @@ function normalizeBrand(val: unknown): Record<string, unknown> {
 
 let warnedOnce = false;
 async function getOrganizerBrandSafe() {
-  // Skip brand fetch if DB not configured or you explicitly opt out
+  // Let you skip DB at build / offline
   if (!process.env.DATABASE_URL || process.env.SKIP_DB_IN_LAYOUT === '1') {
     if (process.env.NODE_ENV !== 'production' && !warnedOnce) {
       console.warn('[layout] Skipping DB brand fetch (offline). Using default brand.');
@@ -54,12 +54,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const org = await getOrganizerBrandSafe();
   const brand = normalizeBrand(org?.brand);
 
-  const primary   = (brand.primary as string)   || '#37e3c2';
-  const secondary = (brand.secondary as string) || '#9aa3af';
-  const button    = (brand.button as string)    || '#8b5cf6';
+  // tokens for public theme
+  const primary   = (brand.primary as string)    || '#37e3c2';
+  const secondary = (brand.secondary as string)  || '#9aa3af';
+  const button    = (brand.button as string)     || '#8b5cf6';
   const brandBlue = (brand.headerBlue as string) || '#2439A8';
   const ctaLime   = (brand.cta as string)        || '#B7E000';
-  const logoUrl   = (brand.logoUrl as string)    || undefined;
 
   const cssVars = `
     :root{
@@ -68,6 +68,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       --brand-button:${button};
       --brand-blue:${brandBlue};
       --cta-lime:${ctaLime};
+
       --accent:${primary};
       --accent-2:${button};
       --primary:${button};
@@ -79,7 +80,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <head>
         <link rel="manifest" href="/manifest.webmanifest" />
         <meta name="theme-color" content={ctaLime} />
-        <style dangerouslySetInnerHTML={{ __html: cssVars }} suppressHydrationWarning />
+        <style
+          dangerouslySetInnerHTML={{ __html: cssVars }}
+          suppressHydrationWarning
+        />
       </head>
       <body className="min-h-screen">
         <PwaRegister />

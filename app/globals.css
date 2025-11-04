@@ -1,44 +1,39 @@
 /* app/globals.css */
-/* app/global.css (drop-in) */
+/* app/globals.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* =========================
-   Theme tokens (with sane fallbacks)
-   These are overridden by the SSR <style> from app/layout.tsx.
+   THEME TOKENS (PUBLIC)
+   These are default fallbacks.
+   BrandVars/layout will inject real values for these at runtime.
    ========================= */
 :root {
-    /* Brand palette (fallbacks; layout overrides these) */
     --brand-primary: #37e3c2;
     --brand-button: #8b5cf6;
     --brand-secondary: #9aa3af;
     --brand-blue: #2439A8;
     --cta-lime: #B7E000;
 
-    /* Derived tokens */
     --accent: var(--brand-primary);
     --accent-2: var(--brand-button);
     --primary: var(--brand-button);
 
-    /* Surfaces */
     --bg: #0b0d10;
     --surface: #111418;
     --muted: #9aa3af;
     --line: rgba(255, 255, 255, .12);
 
-    /* Effects */
     --ring: 0 0 0 .15rem rgba(139, 92, 246, .45);
     --glow: 0 12px 34px rgba(55, 227, 194, .25), 0 6px 18px rgba(139, 92, 246, .22);
 
-    /* Lux background cloud stack */
     --bg-gradient:
         radial-gradient(1200px 800px at 18% -10%, #121826 0%, var(--bg) 55%),
         radial-gradient(900px 600px at 110% 8%, #0f1420 0%, transparent 52%),
         radial-gradient(1200px 800px at 50% 120%, rgba(99, 102, 241, .12) 0%, transparent 60%),
         radial-gradient(1000px 700px at -10% 110%, rgba(55, 227, 194, .10) 0%, transparent 60%);
 
-    /* Badge gradient used on public pages */
     --badge-head-gradient: linear-gradient(135deg, #A5E76B 0%, #31C1FF 100%);
 }
 
@@ -46,7 +41,7 @@
 
     html,
     body {
-        height: 100%
+        height: 100%;
     }
 
     body {
@@ -63,11 +58,11 @@
 }
 
 /* =========================
-   Components
+   REUSABLE COMPONENT CLASSES
    ========================= */
 @layer components {
     .container-page {
-        @apply max-w-6xl px-4 mx-auto sm:px-6 md:px-8
+        @apply max-w-6xl px-4 mx-auto sm:px-6 md:px-8;
     }
 
     .glass {
@@ -85,15 +80,17 @@
             var(--glow);
     }
 
-    /* Card (alias .card and .a-card) */
+    /* Public cards (hero, sections, etc) */
     .card,
     .a-card {
         background: linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .03));
         border: 1px solid rgba(255, 255, 255, .10);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .05);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, .35),
+            inset 0 1px 0 rgba(255, 255, 255, .05);
         @apply rounded-2xl;
     }
 
+    /* Little pill badge */
     .badge {
         border: 1px solid rgba(255, 255, 255, .14);
         background: linear-gradient(180deg, rgba(255, 255, 255, .10), rgba(255, 255, 255, .06));
@@ -101,11 +98,12 @@
         padding: .28rem .65rem;
         font-size: .75rem;
         line-height: 1rem;
+        color: #fff;
     }
 
-    /* Unified buttons (aliases: .a-btn and .btn share the same base) */
-    .a-btn,
-    .btn {
+    /* Unified buttons for public side */
+    .btn,
+    .a-btn {
         @apply inline-flex items-center justify-center select-none rounded-xl;
         font-weight: 700;
         line-height: 1;
@@ -113,130 +111,76 @@
         border: 1px solid rgba(255, 255, 255, .12);
         background: rgba(255, 255, 255, .06);
         color: #e5e7eb;
-        transition: transform .18s ease, filter .18s ease, box-shadow .18s ease, border-color .18s ease;
+        transition: transform .18s ease, filter .18s ease,
+            box-shadow .18s ease, border-color .18s ease;
         text-decoration: none;
     }
 
-    .a-btn:hover,
-    .btn:hover {
+    .btn:hover,
+    .a-btn:hover {
         border-color: rgba(255, 255, 255, .22);
         transform: translateY(-1px);
     }
 
-    .a-btn:active,
-    .btn:active {
-        transform: translateY(0)
+    .btn:active,
+    .a-btn:active {
+        transform: translateY(0);
     }
 
-    .a-btn:focus-visible,
-    .btn:focus-visible {
+    .btn:focus-visible,
+    .a-btn:focus-visible {
         outline: none;
-        box-shadow: var(--ring)
+        box-shadow: var(--ring);
     }
 
+    .btn[aria-disabled="true"],
+    .btn:disabled,
     .a-btn[aria-disabled="true"],
-    .a-btn:disabled,
-    .btn:disabled {
+    .a-btn:disabled {
         opacity: .55;
         pointer-events: none;
         transform: none;
     }
 
-    /* Ghost */
-    .a-btn--ghost,
-    .btn-ghost {
-        background: transparent;
-        border-color: rgba(255, 255, 255, .16);
-        color: #e5e7eb;
-    }
-
-    .a-btn--ghost:hover,
-    .btn-ghost:hover {
-        background: rgba(255, 255, 255, .06)
-    }
-
-    /* Accent / primary gradient */
+    /* Gradient hero / accent button */
+    .btn-primary,
     .a-btn--accent,
-    .btn-primary {
+    .a-btn--primary {
         border: none;
         color: #071017;
         background-image: linear-gradient(135deg, var(--accent), var(--accent-2));
         box-shadow: var(--glow);
     }
 
+    .btn-primary:hover,
     .a-btn--accent:hover,
-    .btn-primary:hover {
+    .a-btn--primary:hover {
         filter: saturate(1.05) brightness(1.02);
         transform: translateY(-2px) scale(1.01);
     }
 
+    .btn-primary:active,
     .a-btn--accent:active,
-    .btn-primary:active {
-        transform: translateY(0) scale(.99)
+    .a-btn--primary:active {
+        transform: translateY(0) scale(.99);
     }
 
-    /* Hero size */
-    .a-btn--hero,
-    .btn-hero {
-        border-radius: 1rem;
-        font-weight: 800;
-        letter-spacing: .01em;
-        padding: 1.15rem 1.6rem;
-        font-size: 1.125rem;
-        min-height: 3.5rem;
+    /* Ghost button */
+    .btn-ghost,
+    .a-btn--ghost {
+        background: transparent;
+        border-color: rgba(255, 255, 255, .16);
+        color: #e5e7eb;
     }
 
-    @media (max-width:767px) {
-
-        .a-btn--hero,
-        .btn-hero {
-            padding: .95rem 1.35rem;
-            font-size: 1.05rem;
-            min-height: 3.25rem;
-        }
+    .btn-ghost:hover,
+    .a-btn--ghost:hover {
+        background: rgba(255, 255, 255, .06);
     }
 
-    /* Subtle diagonal shimmer */
-    .a-btn--hero-shine,
-    .btn-hero-shine {
-        position: relative;
-        isolation: isolate;
-        overflow: hidden
-    }
-
-    .a-btn--hero-shine::after,
-    .btn-hero-shine::after {
-        content: "";
-        position: absolute;
-        inset: -25% -60%;
-        border-radius: inherit;
-        pointer-events: none;
-        mix-blend-mode: screen;
-        background: linear-gradient(115deg, transparent 0%, rgba(255, 255, 255, .18) 45%, rgba(255, 255, 255, .38) 50%, rgba(255, 255, 255, .18) 55%, transparent 100%);
-        transform: translateX(-120%) rotate(18deg);
-        opacity: 0;
-        transition: opacity .2s ease;
-    }
-
-    .a-btn--hero-shine:hover::after,
-    .btn-hero-shine:hover::after {
-        opacity: .85;
-        animation: hero-shine 1.2s ease-in-out;
-    }
-
-    @keyframes hero-shine {
-        0% {
-            transform: translateX(-120%) rotate(18deg)
-        }
-
-        100% {
-            transform: translateX(120%) rotate(18deg)
-        }
-    }
-
-    /* CTA button */
+    /* CTA lime button */
     .btn-cta {
-        @apply inline-flex items-center justify-center font-semibold rounded-2xl;
+        @apply font-semibold rounded-2xl;
         background: var(--cta-lime);
         color: #0b0d10;
         padding: .85rem 1.25rem;
@@ -245,11 +189,11 @@
 
     .btn-cta:hover {
         filter: brightness(.98);
-        transform: translateY(-1px)
+        transform: translateY(-1px);
     }
 
     .btn-cta:active {
-        transform: translateY(0)
+        transform: translateY(0);
     }
 
     /* Inputs */
@@ -263,31 +207,67 @@
     }
 
     .input:hover {
-        border-color: rgba(255, 255, 255, .22)
+        border-color: rgba(255, 255, 255, .22);
     }
 
     .input:focus {
         box-shadow: var(--ring), inset 0 1px 0 rgba(255, 255, 255, .06);
-        border-color: rgba(139, 92, 246, .55)
+        border-color: rgba(139, 92, 246, .55);
     }
 
     .label {
         @apply block mb-1 text-sm;
-        color: rgba(255, 255, 255, .72)
+        color: rgba(255, 255, 255, .72);
     }
 
-    .heading-gradient {
-        background: linear-gradient(90deg, #e7fefe 0%, #eae4ff 45%, #e7fefe 100%);
-        -webkit-background-clip: text;
-        background-clip: text;
-        color: transparent;
-        text-shadow: 0 2px 24px rgba(139, 92, 246, .16);
+    /* Marketing strips */
+    .header-strip,
+    .footer-banner {
+        background: var(--brand-blue);
+        color: #fff;
     }
 
-    .shadow-neon {
-        box-shadow: var(--glow)
+    /* Badge preview card vibe (banana-card + sheen) */
+    :root {
+        --banana-ink: 222 47% 10%;
+        --banana-sun: 43 96% 54;
     }
 
+    .banana-card {
+        background: radial-gradient(120% 120% at 0% 0%,
+                hsla(var(--banana-sun)/0.08) 0%,
+                rgba(0, 0, 0, .8) 40%,
+                rgba(0, 0, 0, .85) 100%);
+        border: 1px solid hsla(var(--banana-sun)/0.12);
+        border-radius: 1.5rem;
+        box-shadow: 0 12px 32px -12px rgba(0, 0, 0, .35);
+        position: relative;
+        isolation: isolate;
+        overflow: hidden;
+    }
+
+  /* Kill only the yellow banana sheen ribbon */
+  .banana-sheen-hover::after {
+      content: none !important;
+      /* don't render the pseudo-element at all */
+      animation: none !important;
+      /* extra safety */
+      opacity: 0 !important;
+      /* extra safety */
+  }
+
+  .banana-sheen-hover:hover::after {
+      content: none !important;
+      animation: none !important;
+      opacity: 0 !important;
+  }
+
+    /* Badge "TICKET QR" header gradient */
+    .badge-head {
+        background: var(--badge-head-gradient);
+    }
+
+    /* QR frame (white card around QR) */
     .qr-frame {
         background: #fff;
         border-radius: 14px;
@@ -296,75 +276,23 @@
         box-shadow: 0 6px 18px rgba(22, 24, 32, .08);
     }
 
-    .chip {
-        @apply px-4 py-2 text-sm transition border rounded-full;
-        background: rgba(255, 255, 255, .05);
-        border-color: rgba(255, 255, 255, .15);
-        color: rgba(255, 255, 255, .92);
+    /* Headline utilities */
+    .h-hero {
+        font-size: clamp(2rem, 3.5vw, 3rem);
+        font-weight: 600;
+        letter-spacing: -.02em;
     }
 
-    .chip:hover {
-        background: rgba(255, 255, 255, .09);
-        border-color: rgba(255, 255, 255, .25)
-    }
-
-    .chip:focus-visible {
-        box-shadow: var(--ring);
-        outline: none
-    }
-
-    .chip--active {
-        background: #3945d8;
-        border-color: #2b36a8;
-        color: #fff;
-        box-shadow: 0 8px 20px rgba(57, 69, 216, .35);
-    }
-
-    .header-strip,
-    .footer-banner {
-        background: var(--brand-blue);
-        color: #fff
-    }
-
-    .form-section {
-        @apply overflow-hidden border rounded-xl border-white/10
-    }
-
-    .form-section__head {
-        @apply px-4 py-3 text-sm font-semibold;
-        background: rgba(255, 255, 255, .06);
-        color: #fff
-    }
-
-    .badge-head {
-        background: var(--badge-head-gradient)
-    }
-
-    /* Admin table helpers shared in public UI when needed */
-    .a-card {
-        overflow: visible
-    }
-
-    .a-table-wrap {
-        max-height: 75vh;
-        overflow: auto
-    }
-
-    .a-th {
-        @apply p-2 font-medium text-left text-white/70
-    }
-
-    .a-td {
-        @apply p-2 align-top
+    .h-section {
+        font-size: clamp(1.25rem, 2vw, 1.5rem);
+        font-weight: 600;
     }
 }
 
-/* =========================
-   Print
-   ========================= */
+/* Print handling for ticket cards */
 @media print {
     .no-print {
-        display: none !important
+        display: none !important;
     }
 
     .ticket {
@@ -374,125 +302,86 @@
         box-shadow: none !important;
     }
 }
+/* ===== Badge Pedestal (idle rotation + pulse) ===== */
 
-/* =========================
-   Generic sheen helpers
-   ========================= */
-@keyframes sheen-sweep {
-    0% {
-        transform: translateX(-120%) skewX(-15deg);
-        opacity: 0
+/* Container gives perspective (3D “plinth”) */
+.pedestal {
+    perspective: 1400px;
+    display: grid;
+    place-items: center;
+    isolation: isolate;
+}
+
+/* The card wrapper that gently breathes/tilts */
+.pedestal-card {
+    transform-style: preserve-3d;
+    will-change: transform, filter;
+    animation: pedestal-breathe 8s ease-in-out infinite, pedestal-tilt 10s ease-in-out infinite;
+    /* a subtle showcase glow to make gold accents pop */
+    filter: drop-shadow(0 24px 48px rgba(0, 0, 0, .45));
+}
+
+/* Short pulse when inputs change */
+.pedestal-pulse {
+    animation: pedestal-pulse-anim 420ms ease-out, pedestal-breathe 8s ease-in-out infinite, pedestal-tilt 10s ease-in-out infinite;
+}
+
+/* Keyframes */
+@keyframes pedestal-breathe {
+
+    0%,
+    100% {
+        transform: translateZ(0) scale(1);
     }
 
-    10% {
-        opacity: .75
+    50% {
+        transform: translateZ(0) scale(1.01);
+    }
+}
+
+@keyframes pedestal-tilt {
+    0% {
+        transform: rotateY(-4deg) rotateX(0.6deg);
+    }
+
+    50% {
+        transform: rotateY(4deg) rotateX(-0.6deg);
     }
 
     100% {
-        transform: translateX(180%) skewX(-15deg);
-        opacity: 0
+        transform: rotateY(-4deg) rotateX(0.6deg);
     }
 }
 
-.sheen-wrap {
-    position: relative;
-    border-radius: 1rem
-}
-
-.sheen-layer {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    border-radius: inherit;
-    overflow: hidden;
-    z-index: 1
-}
-
-.sheen {
-    position: absolute;
-    top: 0;
-    left: -60%;
-    width: 40%;
-    height: 100%;
-    background: linear-gradient(120deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, .55) 35%, rgba(255, 255, 255, .28) 50%, rgba(255, 255, 255, 0) 70%);
-    transform: skewX(-15deg);
-    opacity: 0;
-}
-
-.sheen--hover:hover .sheen {
-    animation: sheen-sweep 1.6s ease-in-out 1
-}
-
-.sheen--loop .sheen {
-    animation: sheen-sweep 2.8s ease-in-out infinite
-}
-
-.sheen--run .sheen {
-    animation: sheen-sweep 1.6s ease-in-out 1
-}
-
-/* =========================
-   BANANA sheen utilities
-   ========================= */
-:root {
-    --banana-ink: 222 47% 10%;
-    --banana-sun: 43 96% 54;
-}
-
-.banana-card {
-    background: radial-gradient(120% 120% at 0% 0%, hsla(var(--banana-sun)/0.08) 0%, rgba(0, 0, 0, .8) 40%, rgba(0, 0, 0, .85) 100%);
-    border: 1px solid hsla(var(--banana-sun)/0.12);
-    border-radius: 1.5rem;
-    box-shadow: 0 12px 32px -12px rgba(0, 0, 0, .35);
-}
-
-@keyframes banana-shine {
+@keyframes pedestal-pulse-anim {
     0% {
-        transform: translateX(-120%) rotate(20deg)
+        transform: scale(1.0) rotateY(0deg);
+        filter: drop-shadow(0 24px 48px rgba(212, 175, 55, .25));
+    }
+
+    40% {
+        transform: scale(1.015) rotateY(.6deg);
+        filter: drop-shadow(0 28px 60px rgba(212, 175, 55, .38));
     }
 
     100% {
-        transform: translateX(120%) rotate(20deg)
+        transform: scale(1.0) rotateY(0deg);
+        filter: drop-shadow(0 24px 48px rgba(212, 175, 55, .25));
     }
 }
 
-.banana-sheen {
-    position: relative;
-    overflow: hidden
+/* Respect user preference */
+@media (prefers-reduced-motion: reduce) {
+    .pedestal-card {
+        animation: none !important;
+    }
+
+    .pedestal-pulse {
+        animation: none !important;
+    }
 }
 
-.banana-sheen::after,
-.banana-sheen-hover::after {
-    content: '';
-    position: absolute;
-    inset: -20% -60%;
-    background: linear-gradient(115deg, transparent 0%, hsla(var(--banana-sun)/0.12) 45%, hsla(var(--banana-sun)/0.35) 50%, hsla(var(--banana-sun)/0.12) 55%, transparent 100%);
-    mix-blend-mode: screen;
-    pointer-events: none;
-}
-
-.banana-sheen::after {
-    animation: banana-shine 2.4s linear infinite
-}
-
-.banana-sheen-hover::after {
-    opacity: 0;
-    transition: opacity .25s ease
-}
-
-.banana-sheen-hover:hover::after {
-    opacity: 1;
-    animation: banana-shine 2.4s linear infinite
-}
-
-/* Headline helpers */
-.h-hero {
-    font-size: clamp(2rem, 3.5vw, 3rem);
-    font-weight: 600;
-    letter-spacing: -.02em
-}
-
-.h-section {
-    font-size: clamp(1.25rem, 2vw, 1.5rem);
-    font-weight: 600
+/* Optional: explicit reduced-motion class if you want to force it */
+.pedestal--reduced .pedestal-card {
+    animation: none !important;
 }

@@ -1,5 +1,5 @@
 {
   "dependencies": {
-    "@prisma/client": "^4.16.0"
+    "@prisma/client": "^4.16.2"
   }
 }

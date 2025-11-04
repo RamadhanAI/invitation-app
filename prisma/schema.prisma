@@ -1,5 +1,4 @@
 // prisma/schema.prisma
-// ────────────────────────────────────────────────────────────
 
 generator client {
   provider = "prisma-client-js"
@@ -11,93 +10,131 @@ datasource db {
   directUrl = env("DIRECT_URL") // direct (:5432) for prisma CLI
 }
 
+// ----------------------------------------------------------
+// ORGANIZER + STAFF
+// ----------------------------------------------------------
+
 model Organizer {
-  id        String          @id @default(uuid())
+  id        String   @id @default(uuid())
   name      String
-  email     String          @unique
-  apiKey    String          @unique
+  email     String   @unique
+  apiKey    String   @unique
   brand     Json?
-  createdAt DateTime        @default(now())
-  events    Event[]
-  users     OrganizerUser[]
+  createdAt DateTime @default(now())
+
+  events Event[]
+  users  OrganizerUser[]
 }
 
 model OrganizerUser {
-  id          String    @id @default(uuid())
+  id          String   @id @default(uuid())
   organizerId String
   email       String
-  role        String    @default("admin") // admin|editor|scanner
-  createdAt   DateTime  @default(now())
-  organizer   Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  role        String   @default("admin") // "admin" | "editor" | "scanner"
+  createdAt   DateTime @default(now())
+
+  organizer Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
 
   @@unique([organizerId, email])
 }
 
+// ----------------------------------------------------------
+// EVENT TEMPLATE (for presets)
+// ----------------------------------------------------------
+
 model EventTemplate {
   id          String   @id @default(uuid())
-  name        String   @unique(map: "EventTemplate_name_key") // keep existing DB constraint
+  name        String   @unique(map: "EventTemplate_name_key") // keep old DB constraint
   description String?
   defaults    Json
   createdAt   DateTime @default(now())
 }
 
+// ----------------------------------------------------------
+// EVENT + STATION + ATTENDANCE LOG
+// ----------------------------------------------------------
+
 model Event {
-  id            String         @id @default(uuid())
-  slug          String         @unique
-  title         String
-  date          DateTime
-  price         Int
-  description   String?
-  venue         String?
-  capacity      Int?
-  currency      String         @default("USD")
-  status        String         @default("published")
-  createdAt     DateTime       @default(now())
-  organizerId   String?
-  organizer     Organizer?     @relation(fields: [organizerId], references: [id], onDelete: SetNull)
-  registrations Registration[]
-  payments      Payment[]
-  stations      Station[] // per-event scanner stations
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  title       String
+  date        DateTime
+  price       Int
+  description String?
+  venue       String?
+  capacity    Int?
+  currency    String   @default("USD")
+  status      String   @default("published")
+  createdAt   DateTime @default(now())
+
+  organizerId String?
+  organizer   Organizer? @relation(fields: [organizerId], references: [id], onDelete: SetNull)
+
+  registrations    Registration[]
+  payments         Payment[]
+  stations         Station[] // physical/virtual scanners ("Gate A iPad", "VIP Door")
+  attendanceEvents AttendanceEvent[] // immutable scan log rows
 
   @@index([organizerId])
 }
 
-// NEW: Physical/virtual scanning station.
-// Each device logs in once (code + secret); server stamps scans with Station.name.
+// Each physical / virtual scanner device.
+// Security can later say: "IN VIP ENTRANCE" or "OUT HALL EXIT" because we tag scans with Station.name.
 model Station {
-  id         String   @id @default(uuid())   // stored as TEXT string
+  id         String  @id @default(uuid()) // text UUID
   eventId    String
-  name       String
-  code       String
-  secretHash String
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  name       String // e.g. "VIP Entrance", "Hall 4 Exit"
+  code       String // short code guard types when arming device
+  secretHash String // hashed shared secret/password
+  active     Boolean @default(true)
 
-  event      Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@unique([eventId, code], name: "station_event_code")
   @@index([eventId])
 }
 
-model Registration {
-  id           String    @id @default(uuid())
-  eventId      String
-  email        String
-  price        Int
-  paid         Boolean   @default(false)
-  qrToken      String    @unique
-  registeredAt DateTime  @default(now())
-  attended     Boolean   @default(false)
-  scannedAt    DateTime?
-  scannedBy    String?
+// ----------------------------------------------------------
+// REGISTRATION / TICKET HOLDER (live state)
+// ----------------------------------------------------------
 
-  // explicit check-out tracking
+model Registration {
+  id String @id @default(uuid())
+
+  eventId String
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  email String
+  price Int
+  paid  Boolean @default(false)
+
+  qrToken      String   @unique
+  registeredAt DateTime @default(now())
+
+  // ---- LIVE DOOR STATE ----
+  // attended: they've been let in at least once (first successful IN)
+  attended Boolean @default(false)
+
+  // scannedAt: most recent IN timestamp (latest entry)
+  scannedAt DateTime?
+
+  // scannedBy: which station/door/device did that IN
+  scannedBy String?
+
+  // checkedOutAt: most recent OUT timestamp
   checkedOutAt DateTime?
+
+  // checkedOutBy: which station/door/device did that OUT
   checkedOutBy String?
 
-  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  meta  Json?
+  // Captured profile/custom fields (name/company/etc.)
+  meta Json?
+
+  // backref to immutable scan log
+  attendanceEvents AttendanceEvent[]
 
   @@unique([eventId, email], name: "eventId_email")
   @@unique([eventId, qrToken], name: "eventId_qrToken")
@@ -108,19 +145,53 @@ model Registration {
   @@index([eventId, checkedOutBy])
 }
 
+// ----------------------------------------------------------
+// ATTENDANCE EVENT (immutable audit trail)
+// One row per "beep". Never edited after insert.
+// action: "IN", "OUT", "DENY"
+// stationLabel: snapshot of Station.name at that moment
+// at: exact timestamp
+// ----------------------------------------------------------
+
+model AttendanceEvent {
+  id String @id @default(cuid())
+
+  eventId        String
+  registrationId String
+  qrToken        String
+
+  action        String // "IN" | "OUT" | "DENY"
+  stationLabel  String? // e.g. "VIP Entrance"
+  scannedByUser String? // optional: staff email if manually approved
+  at            DateTime @default(now())
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, at])
+  @@index([qrToken, at])
+  @@index([registrationId, at])
+}
+
+// ----------------------------------------------------------
+// PAYMENTS
+// ----------------------------------------------------------
+
 model Payment {
-  id        String   @id @default(uuid())
+  id        String  @id @default(uuid())
   eventId   String
   email     String
   amount    Int
-  currency  String   @default("USD")
-  provider  String   @default("stripe")
-  status    String   @default("pending")
-  sessionId String?  @unique
-  chargeId  String?  @unique
+  currency  String  @default("USD")
+  provider  String  @default("stripe")
+  status    String  @default("pending")
+  sessionId String? @unique
+  chargeId  String? @unique
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@index([eventId, status])
 }

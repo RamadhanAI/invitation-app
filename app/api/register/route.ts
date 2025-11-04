@@ -6,20 +6,42 @@ import * as crypto from 'node:crypto';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/* ---------- Static loader map (no dynamic import strings) ---------- */
+/* ---------- Dynamic optional modules (loose-typed on purpose) ---------- */
+
+type AnyFn = (...args: any[]) => any;
+
+type RateLimitModule = {
+  rateLimit: AnyFn;
+  ipKey: AnyFn;
+};
+type EmailModule = {
+  sendRegistrationEmail: AnyFn;
+};
+type TokensModule = {
+  signTicket: AnyFn;
+  verifyTicket: AnyFn;
+};
+type MetaModule = {
+  normalizeMeta: AnyFn;
+};
+type IcsModule = {
+  buildIcs: AnyFn;
+};
+
 const loaders = {
-  rateLimit: () => import('@/lib/rateLimit'),
-  email: () => import('@/lib/email'),
-  tokens: () => import('@/lib/tokens'),
-  meta: () => import('@/lib/meta'),
-  ics: () => import('@/lib/ics'),
+  rateLimit: () => import('@/lib/rateLimit') as Promise<RateLimitModule>,
+  email: () => import('@/lib/email') as Promise<EmailModule>,
+  tokens: () => import('@/lib/tokens') as Promise<TokensModule>,
+  meta: () => import('@/lib/meta') as Promise<MetaModule>,
+  ics: () => import('@/lib/ics') as Promise<IcsModule>,
 } as const;
 
 async function tryLoad<K extends keyof typeof loaders>(
   key: K
 ): Promise<Awaited<ReturnType<(typeof loaders)[K]>> | null> {
   try {
-    // @ts-expect-error - TS can’t perfectly infer Awaited here, but it’s fine for optional usage.
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore - dynamic module shape is intentionally loose
     return await loaders[key]();
   } catch {
     return null;
@@ -47,8 +69,8 @@ function originFrom(req: Request) {
 async function verifyCaptchaIfEnabled(captchaToken: string | undefined, ip: string) {
   const hSecret = process.env.HCAPTCHA_SECRET;
   const gSecret = process.env.RECAPTCHA_SECRET;
-  if (!hSecret && !gSecret) return { ok: true };
-  if (!captchaToken) return { ok: false, error: 'Captcha required' };
+  if (!hSecret && !gSecret) return { ok: true as const };
+  if (!captchaToken) return { ok: false as const, error: 'Captcha required' };
   try {
     if (hSecret) {
       const form = new URLSearchParams({ secret: hSecret, response: captchaToken, remoteip: ip });
@@ -58,8 +80,8 @@ async function verifyCaptchaIfEnabled(captchaToken: string | undefined, ip: stri
         body: form.toString(),
         cache: 'no-store',
       });
-      const json = await r.json();
-      return json.success ? { ok: true } : { ok: false, error: 'Captcha failed' };
+      const json = (await r.json()) as { success?: boolean };
+      return json.success ? { ok: true as const } : { ok: false as const, error: 'Captcha failed' };
     }
     if (gSecret) {
       const form = new URLSearchParams({ secret: gSecret, response: captchaToken, remoteip: ip });
@@ -69,46 +91,52 @@ async function verifyCaptchaIfEnabled(captchaToken: string | undefined, ip: stri
         body: form.toString(),
         cache: 'no-store',
       });
-      const json = await r.json();
-      return json.success ? { ok: true } : { ok: false, error: 'Captcha failed' };
+      const json = (await r.json()) as { success?: boolean };
+      return json.success ? { ok: true as const } : { ok: false as const, error: 'Captcha failed' };
     }
   } catch {
-    return { ok: false, error: 'Captcha verification error' };
+    return { ok: false as const, error: 'Captcha verification error' };
   }
-  return { ok: true };
+  return { ok: true as const };
 }
 
 function clientIp(req: Request) {
   const xf = req.headers.get('x-forwarded-for') || '';
-  return xf.split(',')[0].trim() || '0.0.0.0';
+  return xf.split(',')[0]?.trim() || '0.0.0.0';
 }
 
 /* ------------------------------ Route ------------------------------ */
 export async function POST(req: Request) {
   try {
-    // Optional modules (loaded statically via map; failures tolerated)
-    const rate = await tryLoad('rateLimit'); // { rateLimit, ipKey } expected
-    const email = await tryLoad('email');    // { sendRegistrationEmail } expected
-    const tokens = await tryLoad('tokens');  // { signTicket, verifyTicket } expected
-    const metaUtil = await tryLoad('meta');  // { normalizeMeta } optional
-    const icsUtil = await tryLoad('ics');    // { buildIcs } optional
+    const rate = await tryLoad('rateLimit');
+    const email = await tryLoad('email');
+    const tokens = await tryLoad('tokens');
+    const metaUtil = await tryLoad('meta');
+    const icsUtil = await tryLoad('ics');
 
     // Rate limit (optional)
     if (rate?.rateLimit && rate?.ipKey) {
-      const rl = (rate.rateLimit as any)({
-        key: (rate.ipKey as any)(req, 'register'),
+      const rl = rate.rateLimit({
+        key: rate.ipKey(req, 'register'),
         limit: 5,
         windowMs: 60_000,
-      });
+      }) as { ok: boolean };
       if (!rl.ok) return err(429, 'Too many attempts. Try again in a minute.');
     }
 
-    // Parse body (support `slug` and `eventSlug`)
-    const body = await req.json().catch(() => ({} as any));
-    const emailRaw: string | undefined = body.email;
-    const slug: string | undefined = body.slug || body.eventSlug;
-    const meta = (typeof body.meta === 'object' || typeof body.meta === 'string') ? body.meta : {};
-    const captchaToken: string | undefined = body.captchaToken;
+    // Parse body
+    const body = (await req.json().catch(() => ({}))) as {
+      email?: string;
+      slug?: string;
+      eventSlug?: string;
+      meta?: unknown;
+      captchaToken?: string;
+    };
+
+    const emailRaw = body.email;
+    const slug = body.slug || body.eventSlug;
+    const meta = typeof body.meta === 'object' || typeof body.meta === 'string' ? body.meta : {};
+    const captchaToken = body.captchaToken;
 
     if (!emailRaw || !slug) return err(400, 'Missing email or slug');
 
@@ -133,7 +161,7 @@ export async function POST(req: Request) {
     });
     if (!event) return err(404, 'Event not found');
 
-    // Capacity
+    // Capacity gate
     if (event.capacity && event.capacity > 0) {
       const total = await prisma.registration.count({ where: { eventId: event.id } });
       if (total >= event.capacity) return err(409, 'Registration is full for this event.');
@@ -160,9 +188,18 @@ export async function POST(req: Request) {
         select: { id: true, email: true, paid: true, qrToken: true, meta: true },
       });
     } else if (meta && typeof meta === 'object') {
-      // Merge any new meta keys on repeat submissions
-      const existing = (registration.meta as any) || {};
-            const merged = { ...existing, ...(meta as any) };
+      // Merge any new meta keys on repeat submissions (handle legacy string)
+      const existing =
+        (typeof registration.meta === 'string'
+          ? (() => {
+              try {
+                return JSON.parse(registration.meta as any);
+              } catch {
+                return {};
+              }
+            })()
+          : (registration.meta as any)) || {};
+      const merged = { ...existing, ...(meta as any) };
       registration = await prisma.registration.update({
         where: { id: registration.id },
         data: { meta: merged },
@@ -170,15 +207,15 @@ export async function POST(req: Request) {
       });
     }
 
-    // Upgrade to JWT token if configured & helpers present
+    // Upgrade to JWT token if configured
     if (process.env.TICKET_JWT_SECRET && tokens?.signTicket && tokens?.verifyTicket) {
-      const valid = (tokens.verifyTicket as any)(registration.qrToken);
+      const valid = !!tokens.verifyTicket(registration.qrToken);
       if (!valid) {
-        const jwtToken = (tokens.signTicket as any)({
+        const jwtToken = tokens.signTicket({
           sub: registration.id,
           eventId: event.id,
           email: registration.email,
-        });
+        }) as string;
         await prisma.registration.update({
           where: { id: registration.id },
           data: { qrToken: jwtToken },
@@ -187,10 +224,11 @@ export async function POST(req: Request) {
       }
     }
 
-    // Normalize meta for email template (optional util)
+    // Normalize meta for email/template
     const normMeta =
-      (metaUtil?.normalizeMeta as any)?.(registration.meta) ?? (registration.meta as any) ?? {};
-    const reqMeta = (metaUtil?.normalizeMeta as any)?.(meta) ?? (meta as any) ?? {};
+      (metaUtil?.normalizeMeta?.(registration.meta) as any) ??
+      ((registration.meta as any) ?? {});
+    const reqMeta = (metaUtil?.normalizeMeta?.(meta) as any) ?? ((meta as any) ?? {});
     const finalMeta = {
       firstName: normMeta.firstName ?? reqMeta.firstName,
       lastName: normMeta.lastName ?? reqMeta.lastName,
@@ -200,28 +238,32 @@ export async function POST(req: Request) {
         reqMeta.companyName ??
         normMeta.company ??
         reqMeta.company,
+      // ensure a non-VISITOR default
+      role: normMeta.role ?? reqMeta.role ?? 'ATTENDEE',
     };
 
-    // Optional ICS attachment (we still let lib/email build one if you prefer)
+    // Optional ICS (kept for attachments)
+    const base = originFrom(req);
     let icsStr = '';
     if (icsUtil?.buildIcs) {
-      icsStr = (icsUtil.buildIcs as any)({
+      icsStr = icsUtil.buildIcs({
         title: event.title,
         start: new Date(event.date ?? Date.now()),
         end: event.date ? new Date(new Date(event.date).getTime() + 2 * 60 * 60 * 1000) : undefined,
         location: event.venue ?? '',
-        url: `${originFrom(req)}/e/${event.slug}`,
-      });
+        url: `${base}/e/${event.slug}`,
+      }) as string;
     } else {
-      const dt =
-        new Date(event.date ?? Date.now()).toISOString().replace(/[-:]/g, '').split('.')[0] +
-        'Z';
+      const dt = new Date(event.date ?? Date.now())
+        .toISOString()
+        .replace(/[-:]/g, '')
+        .split('.')[0] + 'Z';
       icsStr = `BEGIN:VCALENDAR
 VERSION:2.0
 BEGIN:VEVENT
 SUMMARY:${event.title}
 DTSTART:${dt}
-URL:${originFrom(req)}/e/${event.slug}
+URL:${base}/e/${event.slug}
 END:VEVENT
 END:VCALENDAR`;
     }
@@ -234,35 +276,42 @@ END:VCALENDAR`;
       },
     ];
 
-    // Email (optional)
+    // Email (optional + non-blocking)
     if (email?.sendRegistrationEmail) {
       const brand = (event.organizer?.brand ?? {}) as any;
-      const appOrigin = originFrom(req);
-
-      (email.sendRegistrationEmail as any)({
-        to: registration.email,
-        brand,
-        event: {
-          title: event.title,
-          date: event.date ?? undefined,
-          venue: event.venue ?? undefined,
-          currency: event.currency,
-          price: event.price,
-          slug: event.slug,
-        },
-        token: registration.qrToken,
-        meta: finalMeta,
-        // These are optional; lib/email will merge or ignore as needed
-        attachments,
-        appUrl: appOrigin, // helps lib/email find /api/tickets/png
-      }).catch(() => {}); // never block on email failures
+      email
+        .sendRegistrationEmail({
+          to: registration.email,
+          brand,
+          event: {
+            title: event.title,
+            date: event.date ?? undefined,
+            venue: event.venue ?? undefined,
+            currency: event.currency,
+            price: event.price,
+            slug: event.slug,
+          },
+          token: registration.qrToken,
+          meta: finalMeta,
+          attachments,
+          appUrl: base, // allows lib/email to call /api/ticket/png
+        })
+        .catch(() => {});
     }
 
-    const ticketUrl = `${originFrom(req)}/api/tickets/${encodeURIComponent(
-      registration.qrToken
-    )}`;
-    return ok({ registration: { ...registration, ticketUrl } });
+    // Return both a page URL and a PNG URL
+    const ticketPageUrl = `${base}/t/${encodeURIComponent(registration.qrToken)}`;
+    const ticketPngUrl = `${base}/api/ticket/png?token=${encodeURIComponent(registration.qrToken)}`;
+
+    return ok({
+      registration: {
+        ...registration,
+        ticketUrl: ticketPageUrl,
+        ticketPngUrl,
+      },
+    });
   } catch (e) {
+    // eslint-disable-next-line no-console
     console.error('[register] error:', e);
     return err(500, 'Internal error');
   }

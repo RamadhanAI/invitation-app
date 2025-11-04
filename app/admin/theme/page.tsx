@@ -24,7 +24,9 @@ async function updateBrand(formData: FormData) {
   try {
     const u = new URL(logoUrl);
     if (u.protocol !== 'https:') logoUrl = '';
-  } catch { logoUrl = ''; }
+  } catch {
+    logoUrl = '';
+  }
 
   const brand = {
     primary:    hex(primary, '#111827'),
@@ -46,7 +48,10 @@ async function updateBrand(formData: FormData) {
       },
     });
   } else {
-    await prisma.organizer.update({ where: { id: org.id }, data: { brand } });
+    await prisma.organizer.update({
+      where: { id: org.id },
+      data: { brand },
+    });
   }
 
   redirect('/admin/theme');
@@ -59,23 +64,59 @@ export default async function ThemeEditor() {
   return (
     <div className="space-y-6">
       <form action={updateBrand} className="p-4 a-card md:p-6">
-        <h1 className="mb-3 text-xl font-semibold">Admin Theme</h1>
+        <h1 className="mb-3 text-xl font-semibold text-white">Admin Theme</h1>
         <p className="text-sm text-[color:var(--muted)] mb-4">
-          Set the brand colors used across admin and email accents.
+          Set the brand colors used across admin, emails, and public headers.
         </p>
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Field label="Primary" name="primary" defaultValue={hex(b.primary, '#111827')} type="color" />
-          <Field label="Secondary" name="secondary" defaultValue={hex(b.secondary, '#F59E0B')} type="color" />
-          <Field label="Button" name="button" defaultValue={hex(b.button, '#111827')} type="color" />
-          <Field label="Header Blue" name="headerBlue" defaultValue={hex(b.headerBlue, '#1D4ED8')} type="color" />
-          <Field label="CTA Lime" name="cta" defaultValue={hex(b.cta, '#B7E000')} type="color" />
+          <Field
+            label="Primary"
+            name="primary"
+            defaultValue={hex(b.primary, '#111827')}
+            type="color"
+          />
+          <Field
+            label="Secondary"
+            name="secondary"
+            defaultValue={hex(b.secondary, '#F59E0B')}
+            type="color"
+          />
+          <Field
+            label="Button"
+            name="button"
+            defaultValue={hex(b.button, '#111827')}
+            type="color"
+          />
+          <Field
+            label="Header Blue"
+            name="headerBlue"
+            defaultValue={hex(b.headerBlue, '#1D4ED8')}
+            type="color"
+          />
+          <Field
+            label="CTA Lime"
+            name="cta"
+            defaultValue={hex(b.cta, '#B7E000')}
+            type="color"
+          />
           <div className="md:col-span-2">
-            <Field label="Logo URL" name="logoUrl" defaultValue={typeof b.logoUrl === 'string' ? b.logoUrl : ''} placeholder="https://…" />
+            <Field
+              label="Logo URL"
+              name="logoUrl"
+              defaultValue={typeof b.logoUrl === 'string' ? b.logoUrl : ''}
+              placeholder="https://…"
+            />
           </div>
         </div>
+
         <div className="flex items-center gap-3 mt-4">
-          <button className="a-btn a-btn--primary" type="submit">Save</button>
-          <a href="/admin/events" className="a-btn a-btn--ghost">Back</a>
+          <button className="a-btn a-btn--primary" type="submit">
+            Save
+          </button>
+          <a href="/admin/events" className="a-btn a-btn--ghost">
+            Back
+          </a>
         </div>
       </form>
 
@@ -97,7 +138,7 @@ function Field(props: React.InputHTMLAttributes<HTMLInputElement> & { label: str
   const { label, ...rest } = props;
   return (
     <label className="block">
-      <div className="mb-1 text-sm">{label}</div>
+      <div className="mb-1 text-sm text-white">{label}</div>
       <input className="a-input" {...rest} />
     </label>
   );
@@ -105,9 +146,20 @@ function Field(props: React.InputHTMLAttributes<HTMLInputElement> & { label: str
 
 function Swatch({ label, color }: { label: string; color: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <div style={{ width: 28, height: 28, borderRadius: 8, background: color, border: '1px solid var(--line)' }} />
-      <div className="text-sm">{label} <span className="text-[color:var(--muted)] ml-1">{color}</span></div>
+    <div className="flex items-center gap-2 text-white">
+      <div
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 8,
+          background: color,
+          border: '1px solid var(--line)',
+        }}
+      />
+      <div className="text-sm">
+        {label}{' '}
+        <span className="text-[color:var(--muted)] ml-1">{color}</span>
+      </div>
     </div>
   );
 }

@@ -1,10 +1,10 @@
 // lib/email.ts
+// lib/email.ts
 import QRCode from 'qrcode';
 import { prisma } from './db';
 import { normalizeMeta, type AttendeeMeta } from './meta';
 import { buildBadgeHTML, type Brand, type EventLite } from './emailTemplate';
 
-/** Lazily create the Resend client so webpack doesn’t include it at build time */
 let resendClient: any | null = null;
 async function getResend() {
   if (!resendClient && process.env.RESEND_API_KEY) {
@@ -14,19 +14,18 @@ async function getResend() {
   return resendClient;
 }
 
-/** Resolve the base URL for links and PNG fetches */
 function deriveBaseUrl(h?: Headers | HeadersInit): string {
-  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '');
+  if (process.env.NEXT_PUBLIC_APP_URL)
+    return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '');
   try {
     const headers = new Headers(h);
     const proto = headers.get('x-forwarded-proto') || 'https';
-    const host  = headers.get('x-forwarded-host') || headers.get('host');
+    const host = headers.get('x-forwarded-host') || headers.get('host');
     if (host) return `${proto}://${host}`;
   } catch {}
   return 'http://localhost:3000';
 }
 
-/** Accept JSON or object brand */
 function normalizeBrand(val: unknown): Brand {
   if (typeof val === 'string') {
     try {
@@ -38,11 +37,11 @@ function normalizeBrand(val: unknown): Brand {
   return {};
 }
 
-/** Simple .ics builder */
 function icsForEvent(ev: EventLite, email?: string) {
   const start = ev.date ? new Date(ev.date) : null;
   const end = start ? new Date(start.getTime() + 2 * 60 * 60 * 1000) : null;
-  const ts = (d: Date) => d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  const ts = (d: Date) =>
+    d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
   return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -58,10 +57,12 @@ function icsForEvent(ev: EventLite, email?: string) {
     email ? `ATTENDEE:MAILTO:${email}` : '',
     'END:VEVENT',
     'END:VCALENDAR',
-  ].filter(Boolean).join('\r\n');
+  ]
+    .filter(Boolean)
+    .join('\r\n');
 }
 
-/* ----------------------------- Public API ----------------------------- */
+/* ---------------- Public API ---------------- */
 
 type LegacyArgs = { to: string; eventId: string; qrToken: string };
 type V2Args = {
@@ -70,19 +71,27 @@ type V2Args = {
   event: EventLite & { slug?: string };
   token: string;
   meta: AttendeeMeta;
-  attachments?: Array<{ filename: string; content: string; type?: string; disposition?: string; contentId?: string }>;
+  attachments?: Array<{
+    filename: string;
+    content: string;
+    type?: string;
+    disposition?: string;
+    contentId?: string;
+  }>;
   appUrl?: string;
   ticketUrl?: string;
 };
 
 export async function sendRegistrationEmail(args: LegacyArgs): Promise<void>;
 export async function sendRegistrationEmail(args: V2Args): Promise<void>;
-export async function sendRegistrationEmail(args: LegacyArgs | V2Args): Promise<void> {
+export async function sendRegistrationEmail(
+  args: LegacyArgs | V2Args
+): Promise<void> {
   const resend = await getResend();
-  if (!resend) return; // Resend not configured → noop
+  if (!resend) return; // if Resend not configured, we silently don't send
 
   if ('eventId' in args) {
-    // Legacy path: load event + brand + attendee meta
+    // Legacy path
     const event = await prisma.event.findUnique({
       where: { id: args.eventId },
       select: {
@@ -116,13 +125,14 @@ export async function sendRegistrationEmail(args: LegacyArgs | V2Args): Promise<
       },
       token: args.qrToken,
       meta,
-      fromName: brand.emailFromName || event.organizer?.name || 'Your Events',
+      fromName:
+        brand.emailFromName || event.organizer?.name || 'Your Events',
       appUrl: process.env.NEXT_PUBLIC_APP_URL,
     });
     return;
   }
 
-  // V2 path
+  // Modern path
   await sendEmailInternal(resend, {
     to: args.to,
     brand: args.brand,
@@ -135,7 +145,7 @@ export async function sendRegistrationEmail(args: LegacyArgs | V2Args): Promise<
   });
 }
 
-/* --------------------------- Internal sender -------------------------- */
+/* ---------------- Internal sender ---------------- */
 
 async function sendEmailInternal(
   resend: any,
@@ -146,14 +156,22 @@ async function sendEmailInternal(
     token: string;
     meta: AttendeeMeta;
     fromName: string;
-    attachments?: Array<{ filename: string; content: string; type?: string; disposition?: string; contentId?: string }>;
+    attachments?: Array<{
+      filename: string;
+      content: string;
+      type?: string;
+      disposition?: string;
+      contentId?: string;
+    }>;
     appUrl?: string;
   }
 ) {
-  // QR as Data URL (keeps emails compatible without CID)
-  const qrDataUrl = await QRCode.toDataURL(opts.token, { width: 400, margin: 1 });
+  // QR data URL for email body
+  const qrDataUrl = await QRCode.toDataURL(opts.token, {
+    width: 400,
+    margin: 1,
+  });
 
-  // Build HTML with embedded QR
   const html = buildBadgeHTML({
     brand: opts.brand,
     event: opts.event,
@@ -166,32 +184,56 @@ async function sendEmailInternal(
   // .ics calendar
   const ics = Buffer.from(icsForEvent(opts.event, opts.to), 'utf8');
 
-  // Optional full ticket PNG from API (don’t hard-fail if it’s unavailable)
+  // Fetch the SAME PNG your app uses (singular 'ticket')
   let ticketPngBase64: string | null = null;
   try {
     const baseUrl = (opts.appUrl ?? deriveBaseUrl(undefined)).replace(/\/$/, '');
-    const pngRes = await fetch(`${baseUrl}/api/tickets/png?token=${encodeURIComponent(opts.token)}`, { cache: 'no-store' });
-    if (pngRes.ok) ticketPngBase64 = Buffer.from(await pngRes.arrayBuffer()).toString('base64');
-  } catch {}
+    const pngRes = await fetch(
+      `${baseUrl}/api/ticket/png?token=${encodeURIComponent(opts.token)}`,
+      { cache: 'no-store' }
+    );
+    if (pngRes.ok) {
+      ticketPngBase64 = Buffer.from(
+        await pngRes.arrayBuffer()
+      ).toString('base64');
+    }
+  } catch {
+    // non-fatal
+  }
 
-  // Attachments
-  const attachments: Array<{ filename: string; content: string; contentType?: string }> = [
+  const attachments: Array<{
+    filename: string;
+    content: string;
+    contentType?: string;
+  }> = [
     {
       filename: `${(opts.event as any).slug || 'event'}.ics`,
       content: ics.toString('base64'),
       contentType: 'text/calendar; charset=utf-8; method=PUBLISH',
     },
   ];
+
   if (ticketPngBase64) {
-    attachments.push({ filename: 'ticket.png', content: ticketPngBase64, contentType: 'image/png' });
+    attachments.push({
+      filename: 'ticket.png',
+      content: ticketPngBase64,
+      contentType: 'image/png',
+    });
   }
+
   if (opts.attachments?.length) {
     for (const a of opts.attachments) {
-      attachments.push({ filename: a.filename, content: a.content, contentType: a.type });
+      attachments.push({
+        filename: a.filename,
+        content: a.content,
+        contentType: a.type,
+      });
     }
   }
 
-  const from = (process.env.EMAIL_FROM?.trim() || 'Invitation App <tickets@triggerdxb.com>');
+  const from =
+    process.env.EMAIL_FROM?.trim() ||
+    'Invitation App <tickets@triggerdxb.com>';
 
   const { error } = await resend.emails.send({
     from,
