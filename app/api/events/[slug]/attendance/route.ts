@@ -9,6 +9,7 @@ import { verifySession } from '@/lib/session';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// ---------- helpers ----------
 function normalizeMeta(val: unknown): Record<string, any> {
   if (!val) return {};
   if (typeof val === 'string') { try { return JSON.parse(val); } catch { return {}; } }
@@ -30,7 +31,7 @@ async function fireWebhook(event: 'attendance.marked', payload: any) {
   } catch {}
 }
 
-function readHeaderKey(req: Request) {
+function readProvidedKey(req: Request) {
   const h = new Headers(req.headers);
   const headerKey = (h.get('x-api-key') ?? '').trim();
   const auth = h.get('authorization') ?? '';
@@ -42,6 +43,7 @@ type GateOk =
   | { ok: true; role: 'admin'; eventId: string }
   | { ok: true; role: 'station'; eventId: string; station: { id: string; name: string } };
 
+// Gate: station cookie (preferred) → admin keys fallback
 async function gate(req: Request, slug: string): Promise<GateOk | { ok: false; status: number; error: string }> {
   const event = await prisma.event.findUnique({
     where: { slug },
@@ -49,9 +51,9 @@ async function gate(req: Request, slug: string): Promise<GateOk | { ok: false; s
   });
   if (!event) return { ok: false, status: 404, error: 'Event not found' };
 
-  // 1) Try station session cookie
-  const cookieToken = cookies().get('sc_sess')?.value;
-  const sess = verifySession(cookieToken);
+  // 1) Station cookie (FIXED name: scan_sess)
+  const cookieToken = cookies().get('scan_sess')?.value || cookies().get('sc_sess')?.value || null;
+  const sess = verifySession(cookieToken || undefined);
   if (sess && sess.eventId === event.id) {
     const station = await prisma.station.findUnique({
       where: { id: sess.stationId },
@@ -61,7 +63,7 @@ async function gate(req: Request, slug: string): Promise<GateOk | { ok: false; s
   }
 
   // 2) Admin fallbacks (organizer key / ADMIN_KEY / SCANNER_KEY)
-  const provided = readHeaderKey(req);
+  const provided = readProvidedKey(req);
   const adminKey = (process.env.NEXT_PUBLIC_ADMIN_KEY || process.env.ADMIN_KEY || '').trim();
   const organizerKey = (event.organizer?.apiKey || '').trim();
   const legacyScannerKey = (process.env.SCANNER_KEY || '').trim();
@@ -191,7 +193,19 @@ export async function POST(req: Request, { params }: { params: { slug: string } 
         scannedBy: attended ? who : null,
         meta: nextMeta,
       },
-      select: { id: true, email: true, attended: true, scannedAt: true, meta: true, scannedBy: true },
+      select: { id: true, email: true, attended: true, scannedAt: true, meta: true, scannedBy: true, eventId: true, qrToken: true },
+    });
+
+    // NEW: immutable audit row
+    await prisma.attendanceEvent.create({
+      data: {
+        eventId: updated.eventId,
+        registrationId: updated.id,
+        qrToken: token,
+        action: attended ? 'IN' : 'DENY',
+        stationLabel: who || null,
+        scannedByUser: g.role === 'admin' ? 'admin' : null,
+      },
     });
 
     fireWebhook('attendance.marked', {
@@ -226,29 +240,40 @@ export async function PATCH(req: Request, { params }: { params: { slug: string }
 
     const reg = await prisma.registration.findUnique({
       where: { id: registrationId },
-      select: { id: true, eventId: true, meta: true },
+      select: { id: true, eventId: true, meta: true, qrToken: true },
     });
     if (!reg || reg.eventId !== g.eventId) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
+    const meta0 = normalizeMeta(reg.meta);
+    const who = (station || meta0.scannedBy || 'admin').trim();
+    const log = Array.isArray(meta0.scanLog) ? meta0.scanLog : [];
     const data: any = {
       attended,
       scannedAt: attended ? new Date() : null,
-      scannedBy: attended ? (station || null) : null,
+      scannedBy: attended ? who : null,
+      meta: attended
+        ? { ...meta0, scannedBy: who, scanLog: [...log, { at: new Date().toISOString(), by: who, via: 'admin' }] }
+        : meta0,
     };
-
-    if (attended) {
-      const meta0 = normalizeMeta(reg.meta);
-      const who = (station || meta0.scannedBy || 'admin').trim();
-      const log = Array.isArray(meta0.scanLog) ? meta0.scanLog : [];
-      data.meta = { ...meta0, scannedBy: who, scanLog: [...log, { at: new Date().toISOString(), by: who, via: 'admin' }] };
-    }
 
     const updated = await prisma.registration.update({
       where: { id: registrationId },
       data,
-      select: { id: true, attended: true, scannedAt: true, scannedBy: true },
+      select: { id: true, attended: true, scannedAt: true, scannedBy: true, eventId: true },
+    });
+
+    // audit row for admin patch
+    await prisma.attendanceEvent.create({
+      data: {
+        eventId: updated.eventId,
+        registrationId: updated.id,
+        qrToken: reg.qrToken,
+        action: attended ? 'IN' : 'DENY',
+        stationLabel: who || null,
+        scannedByUser: 'admin',
+      },
     });
 
     return NextResponse.json({ ok: true, registration: updated });

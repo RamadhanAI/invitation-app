@@ -21,14 +21,7 @@ export type EventLite = {
 
 function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) =>
-    ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;',
-    }[c]!
-    )
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as const)[c]!
   );
 }
 
@@ -47,62 +40,80 @@ function formatCents(cents: number, currency: string) {
 
 function normalizeRole(r?: string) {
   const up = (r || '').trim().toUpperCase();
-  const ALLOW = new Set([
-    'ATTENDEE',
-    'SPEAKER',
-    'VIP',
-    'STAFF',
-    'MEDIA',
-    'EXHIBITOR',
-    'SPONSOR',
-  ]);
+  const ALLOW = new Set(['ATTENDEE', 'SPEAKER', 'VIP', 'STAFF', 'MEDIA', 'EXHIBITOR', 'SPONSOR']);
   return ALLOW.has(up) ? up : 'ATTENDEE';
 }
 
-/**
- * buildBadgeHTML
- * Cinematic black/gold email with embedded QR.
- */
-export function buildBadgeHTML(args: {
+type BuildArgs = {
   brand: Brand;
   event: EventLite;
   token: string;
   meta: Record<string, any>;
   appUrl?: string;
+
+  // New, optional rich-image fields (passed by lib/email.ts)
+  frontPngUrl?: string; // preferred (contains attendee details)
+  backPngUrl?: string;  // optional (sponsor side, if you want to show it)
+  printUrl?: string;    // /t/[token]/print
+
+  // Fallback QR (always provided)
   qrDataUrl: string;
-}) {
+};
+
+/**
+ * buildBadgeHTML
+ * Cinematic black/gold email. Prefers front PNG (with attendee details).
+ * Falls back to QR + text if images are blocked.
+ */
+export function buildBadgeHTML(args: BuildArgs) {
   const { brand, event, token, meta, qrDataUrl } = args;
 
   const primary   = brand.primary   ?? '#ffffff';
   const secondary = brand.secondary ?? 'rgba(255,255,255,.7)';
-  const button    = brand.button    ?? 'linear-gradient(90deg,#FFE58A,#D4AF37 50%,#8B6B16)';
+  const buttonBg  = brand.button    ?? 'linear-gradient(90deg,#FFE58A,#D4AF37 50%,#8B6B16)';
   const nowYear   = new Date().getFullYear();
 
-  const fullName = [meta.firstName, meta.lastName].filter(Boolean).join(' ').trim() || 'Guest';
-  const jobTitle = (meta.jobTitle || '').toString().trim() || '';
-  const company  = (meta.companyName || meta.company || '').toString().trim() || '';
+  const fullName = (meta.fullName ||
+    [meta.firstName, meta.lastName].filter(Boolean).join(' ')).trim() || 'Guest';
+  const jobTitle = (meta.jobTitle || '').toString().trim();
+  const company  = (meta.companyName || meta.company || '').toString().trim();
   const role     = normalizeRole(meta.role);
 
-  const priceText =
-    !event.price || event.price === 0
-      ? 'FREE'
-      : formatCents(event.price, event.currency);
+  const hasPrice = !!event.price && event.price !== 0;
+  const priceText = hasPrice ? formatCents(event.price, event.currency) : 'FREE';
 
   const dateLine = event.date
     ? new Date(event.date as any).toLocaleString(undefined, {
-        year: 'numeric',
-        month: 'short',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
+        year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
       })
     : '';
   const venueLine = event.venue ? ` · ${event.venue}` : '';
 
   const baseUrl = (args.appUrl ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
-  const ticketUrl = `${baseUrl}/t/${encodeURIComponent(token)}`;
-
+  const ticketUrl = args.printUrl || `${baseUrl}/t/${encodeURIComponent(token)}/print`;
   const shortRef = token.length > 14 ? `${token.slice(0, 6)}…${token.slice(-4)}` : token;
+
+  // Prefer rich front PNG (has attendee details). Email clients that block remote images
+  // will still show the textual fallback (name/job/company + QR) below.
+  const frontImageBlock = args.frontPngUrl
+    ? `
+      <div style="border:1px solid #eee;border-radius:10px;overflow:hidden;margin:12px 0;">
+        <img src="${escapeHtml(args.frontPngUrl)}" alt="Your badge" width="800"
+             style="display:block;width:100%;height:auto;border:0;outline:0;" />
+      </div>
+    `
+    : '';
+
+  // Optional: show back image (sponsor side) if provided
+  const backImageBlock = args.backPngUrl
+    ? `
+      <div style="margin-top:8px;font-size:12px;color:#9aa3af">Back side</div>
+      <div style="border:1px solid #eee;border-radius:10px;overflow:hidden;margin:6px 0 0;">
+        <img src="${escapeHtml(args.backPngUrl)}" alt="Back of badge" width="600"
+             style="display:block;width:100%;height:auto;border:0;outline:0;" />
+      </div>
+    `
+    : '';
 
   return `
 <table role="presentation" width="100%" cellPadding="0" cellSpacing="0"
@@ -119,6 +130,7 @@ export function buildBadgeHTML(args: {
                  radial-gradient(circle at 20% 0%,rgba(212,175,55,.22) 0%,rgba(0,0,0,0) 60%),
                  radial-gradient(circle at 80% 120%,rgba(212,175,55,.08) 0%,rgba(0,0,0,0) 70%);
                overflow:hidden;">
+
         <!-- HEADER -->
         <tr>
           <td style="padding:20px 24px;border-bottom:1px solid rgba(212,175,55,.25);">
@@ -159,23 +171,30 @@ export function buildBadgeHTML(args: {
                 background:linear-gradient(135deg,#FFE58A,#D4AF37 50%,#8B6B16);
                 border-radius:999px;padding:4px 8px;border:1px solid rgba(255,255,255,.4);
                 box-shadow:0 10px 24px rgba(212,175,55,.6);text-shadow:0 1px 0 rgba(0,0,0,.4);">
-                ${escapeHtml(priceText)}
+                ${escapeHtml(hasPrice ? priceText : 'FREE')}
               </span>
             </div>
           </td>
         </tr>
 
-        <!-- GOLD CARD BODY -->
+        <!-- PREFERRED: FRONT PNG WITH ATTENDEE DETAILS -->
         <tr>
-          <td style="padding:24px;">
-            <table role="presentation" style="
-                     width:100%;max-width:400px;margin:0 auto;
+          <td style="padding:12px 24px 0 24px;">
+            ${frontImageBlock}
+          </td>
+        </tr>
+
+        <!-- FALLBACK: QR + TEXT (visible even if images blocked) -->
+        <tr>
+          <td style="padding:0 24px 0 24px;">
+            <table role="presentation" width="100%" style="
+                     width:100%;max-width:420px;margin:0 auto;
                      background:radial-gradient(circle at 30% 10%,#3a2a00 0%,#000 70%);
                      background-color:#1a1200;border-radius:14px;border:1px solid rgba(255,255,255,.12);
                      box-shadow:0 25px 60px rgba(212,175,55,.4),0 2px 0 rgba(255,255,255,.2) inset;
                      color:#fff;font-size:14px;line-height:20px;">
               <tr>
-                <td style="padding:16px 16px 12px 16px;border-bottom:1px solid rgba(255,255,255,.12);">
+                <td style="padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.12);">
                   <table role="presentation" width="100%" style="width:100%;">
                     <tr>
                       <td style="font-size:13px;line-height:16px;font-weight:600;color:#fff;">
@@ -196,7 +215,7 @@ export function buildBadgeHTML(args: {
               </tr>
 
               <tr>
-                <td style="padding:16px;">
+                <td style="padding:14px 16px;">
                   <table role="presentation" width="100%" style="width:100%;">
                     <tr valign="top">
                       <td style="width:1%;white-space:nowrap;padding-right:12px;">
@@ -208,7 +227,6 @@ export function buildBadgeHTML(args: {
                                style="display:block;width:108px;height:108px;border-radius:4px;" />
                         </div>
                       </td>
-
                       <td style="font-size:13px;line-height:18px;color:#fff;">
                         <div style="font-weight:700;font-size:14px;line-height:20px;color:#fff;">
                           ${escapeHtml(fullName)}
@@ -216,12 +234,13 @@ export function buildBadgeHTML(args: {
                         ${ jobTitle ? `<div style="color:#9CA3AF;font-size:13px;font-weight:500;line-height:18px;">${escapeHtml(jobTitle)}</div>` : '' }
                         ${ company  ? `<div style="color:#E5E7EB;font-size:12px;font-weight:600;line-height:16px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.03em;">${escapeHtml(company)}</div>` : '<div style="height:8px;"></div>' }
 
-                        <div style="font-size:11px;line-height:16px;color:#D1D5DB;word-break:break-word;max-width:200px;">
+                        <div style="font-size:11px;line-height:16px;color:#D1D5DB;word-break:break-word;max-width:220px;">
                           <strong style="color:#fff;">Important:</strong>
-                          Bring this email and show staff this QR at the entrance. This email is your entry proof.
-                          <br /><br />
-                          Ref:
-                          <code style="background:rgba(0,0,0,.6);border-radius:4px;padding:2px 4px;font-size:11px;color:#fff;border:1px solid rgba(255,255,255,.2);">${escapeHtml(shortRef)}</code>
+                          Bring this email and show staff this QR at the entrance.
+                          <br/><br/>Ref:
+                          <code style="background:rgba(0,0,0,.6);border-radius:4px;padding:2px 4px;font-size:11px;color:#fff;border:1px solid rgba(255,255,255,.2);">
+                            ${escapeHtml(shortRef)}
+                          </code>
                         </div>
                       </td>
                     </tr>
@@ -230,22 +249,21 @@ export function buildBadgeHTML(args: {
               </tr>
 
               <tr>
-                <td style="padding:16px 16px 20px 16px;text-align:center;border-top:1px solid rgba(255,255,255,.12);">
-                  <a href="${ticketUrl}"
+                <td style="padding:14px 16px 16px 16px;text-align:center;border-top:1px solid rgba(255,255,255,.12);">
+                  <a href="${escapeHtml(ticketUrl)}"
                      style="display:inline-block;font-size:13px;line-height:18px;font-weight:700;text-decoration:none;color:#0b0d10;
-                            background:${button};background-size:200% 200%;border-radius:10px;border:1px solid rgba(255,255,255,.4);
+                            background:${buttonBg};background-size:200% 200%;border-radius:10px;border:1px solid rgba(255,255,255,.4);
                             padding:10px 14px;box-shadow:0 16px 36px rgba(212,175,55,.55),0 1px 0 rgba(255,255,255,.5) inset;
                             text-shadow:0 1px 0 rgba(255,255,255,.3);">
-                    View / Save Your Ticket
+                    Open Print Page (Front + Back)
                   </a>
-                  <div style="color:#A1A1AA;font-size:11px;line-height:16px;margin-top:10px;">
-                    We’ve also attached your calendar invite (.ics) and a PNG ticket image (if available).
-                  </div>
                 </td>
               </tr>
             </table>
           </td>
         </tr>
+
+        ${backImageBlock}
 
         <!-- FOOTER -->
         <tr>
@@ -262,5 +280,5 @@ export function buildBadgeHTML(args: {
     </td>
   </tr>
 </table>
-`;
+`.trim();
 }

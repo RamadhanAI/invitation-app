@@ -1,3 +1,4 @@
+// components/BadgePedestal.tsx
 'use client';
 
 import { useEffect, useRef } from 'react';
@@ -19,21 +20,44 @@ export default function BadgePedestal({
 }: Props) {
   const cardRef = useRef<HTMLDivElement>(null);
 
+  // Respect user/system preference in addition to the prop
+  const shouldReduce =
+    reduceMotion ||
+    (typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) ||
+    false;
+
   useEffect(() => {
-    if (!cardRef.current) return;
+    if (shouldReduce) return; // no pulse if reduced motion requested
     const el = cardRef.current;
+    if (!el) return;
+
+    // Restart the pulse animation safely
     el.classList.remove('pedestal-pulse');
-    // force reflow so animation restarts even if key repeats quickly
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-    el.offsetHeight;
-    el.classList.add('pedestal-pulse');
-    const t = setTimeout(() => el.classList.remove('pedestal-pulse'), 500);
-    return () => clearTimeout(t);
-  }, [pulseKey]);
+
+    // Force reflow so the animation reliably restarts even on rapid changes
+    void el.offsetHeight;
+
+    // Add on next frame for consistent style flush
+    const raf = requestAnimationFrame(() => {
+      el.classList.add('pedestal-pulse');
+    });
+
+    // Ensure it doesn’t get stuck if key changes rapidly
+    const tid = window.setTimeout(() => {
+      el.classList.remove('pedestal-pulse');
+    }, 520);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(tid);
+      el.classList.remove('pedestal-pulse');
+    };
+  }, [pulseKey, shouldReduce]);
 
   return (
     <div
-      className={`pedestal ${reduceMotion ? 'pedestal--reduced' : ''} ${className}`}
+      className={`pedestal ${shouldReduce ? 'pedestal--reduced' : ''} ${className}`.trim()}
       aria-label="Badge display pedestal"
     >
       <div ref={cardRef} className="pedestal-card">

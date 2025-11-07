@@ -1,0 +1,35 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "plugins": ["@typescript-eslint"],
+  "extends": ["next", "next/core-web-vitals", "plugin:@typescript-eslint/recommended"],
+  "parserOptions": { "ecmaVersion": 2023, "sourceType": "module" },
+  "rules": {
+    "@next/next/no-img-element": "off",
+    "react/no-unescaped-entities": "off",
+    "no-console": ["warn", { "allow": ["warn", "error"] }],
+    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    "@typescript-eslint/ban-ts-comment": "warn",
+    "@typescript-eslint/no-non-null-asserted-optional-chain": "off"
+  },
+  "overrides": [
+    {
+      "files": ["next.config.*", "middleware.ts", "app/api/**", "pages/api/**", "app/**/route.ts", "scripts/**"],
+      "env": { "node": true },
+      "rules": {
+        "@typescript-eslint/no-explicit-any": "off",
+        "no-console": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "node_modules/",
+    ".next/",
+    "dist/",
+    "out/",
+    "coverage/",
+    "prisma/",
+    "public/"
+  ]
+}

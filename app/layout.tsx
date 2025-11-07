@@ -1,9 +1,17 @@
 // app/layout.tsx
-// app/layout.tsx
 import './globals.css';
 import type { Metadata } from 'next';
 import NextDynamic from 'next/dynamic';
+import { cache } from 'react';
 import { prisma } from '@/lib/db';
+
+// ⬇️ keep only PWA client-only
+const PwaRegister = NextDynamic(() => import('@/components/PwaRegister'), { ssr: false });
+
+// ⬇️ SSR these so they render on first paint
+import HeaderStrip from '@/components/HeaderStrip';
+import SiteHeader from '@/components/SiteHeader';
+import SiteFooter from '@/components/SiteFooter';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,47 +22,29 @@ export const metadata: Metadata = {
   description: 'Event registration & check-in',
 };
 
-const PwaRegister = NextDynamic(() => import('@/components/PwaRegister'), { ssr: false });
-const HeaderStrip  = NextDynamic(() => import('@/components/HeaderStrip'),  { ssr: false });
-const SiteHeader   = NextDynamic(() => import('@/components/SiteHeader'),   { ssr: false });
+const ENABLE_PWA = process.env.NEXT_PUBLIC_ENABLE_PWA === '1';
 
 function normalizeBrand(val: unknown): Record<string, unknown> {
   if (typeof val === 'string') {
-    try {
-      const p = JSON.parse(val);
-      if (p && typeof p === 'object' && !Array.isArray(p)) return p as Record<string, unknown>;
-    } catch {}
+    try { const p = JSON.parse(val); if (p && typeof p === 'object' && !Array.isArray(p)) return p as Record<string, unknown>; } catch {}
   }
   if (val && typeof val === 'object' && !Array.isArray(val)) return val as Record<string, unknown>;
   return {};
 }
 
-let warnedOnce = false;
+const getOrganizerBrandCached = cache(async () => {
+  return prisma.organizer.findFirst({ select: { name: true, brand: true } });
+});
+
 async function getOrganizerBrandSafe() {
-  // Let you skip DB at build / offline
-  if (!process.env.DATABASE_URL || process.env.SKIP_DB_IN_LAYOUT === '1') {
-    if (process.env.NODE_ENV !== 'production' && !warnedOnce) {
-      console.warn('[layout] Skipping DB brand fetch (offline). Using default brand.');
-      warnedOnce = true;
-    }
-    return null;
-  }
-  try {
-    return await prisma.organizer.findFirst({ select: { name: true, brand: true } });
-  } catch {
-    if (process.env.NODE_ENV !== 'production' && !warnedOnce) {
-      console.warn('[layout] DB offline – using default brand. This is non-fatal.');
-      warnedOnce = true;
-    }
-    return null;
-  }
+  if (!process.env.DATABASE_URL || process.env.SKIP_DB_IN_LAYOUT === '1') return null;
+  try { return await getOrganizerBrandCached(); } catch { return null; }
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const org = await getOrganizerBrandSafe();
   const brand = normalizeBrand(org?.brand);
 
-  // tokens for public theme
   const primary   = (brand.primary as string)    || '#37e3c2';
   const secondary = (brand.secondary as string)  || '#9aa3af';
   const button    = (brand.button as string)     || '#8b5cf6';
@@ -68,7 +58,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       --brand-button:${button};
       --brand-blue:${brandBlue};
       --cta-lime:${ctaLime};
-
       --accent:${primary};
       --accent-2:${button};
       --primary:${button};
@@ -80,16 +69,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <head>
         <link rel="manifest" href="/manifest.webmanifest" />
         <meta name="theme-color" content={ctaLime} />
-        <style
-          dangerouslySetInnerHTML={{ __html: cssVars }}
-          suppressHydrationWarning
-        />
+        <style id="brand-vars" dangerouslySetInnerHTML={{ __html: cssVars }} suppressHydrationWarning />
       </head>
       <body className="min-h-screen">
-        <PwaRegister />
+        {ENABLE_PWA && <PwaRegister />}
         <HeaderStrip />
         <SiteHeader />
         {children}
+        <SiteFooter />
       </body>
     </html>
   );

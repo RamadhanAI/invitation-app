@@ -1,4 +1,3 @@
-// components/AdminTopNav.tsx
 'use client';
 import Link from 'next/link';
 import AdminThemeToggle from './AdminThemeToggle';
@@ -7,7 +6,7 @@ export default function AdminTopBar() {
   return (
     <div className="admin-header">
       <div className="admin-header__left">
-        <Link href="/admin/events" className="admin-brand">Demo Organizer</Link>
+        <Link href="/admin" className="admin-brand">Demo Organizer</Link>
         <nav className="admin-nav">
           <Link href="/admin/events" className="a-btn a-btn--ghost a-btn--strong">Events</Link>
           <Link href="/scan" className="a-btn a-btn--ghost a-btn--strong">Scanner</Link>

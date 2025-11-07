@@ -385,3 +385,57 @@
 .pedestal--reduced .pedestal-card {
     animation: none !important;
 }
+/* --- PRINT RESET (append to app/globals.css) --- */
+@media print {
+
+    html,
+    body {
+        background: #fff !important;
+        color: #000 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* No browser headers/footers – user must uncheck them in dialog too */
+    @page {
+        size: A4;
+        margin: 0;
+        /* we position content ourselves */
+    }
+
+    /* Optional wrapper for print layouts */
+    .print-canvas {
+        width: 210mm;
+        /* A4 width */
+        margin: 0 auto;
+        padding: 0;
+        background: #fff !important;
+        box-shadow: none !important;
+        border: 0 !important;
+    }
+
+    /* Ticket/badge cards: force white and remove fancy effects */
+    .ticket {
+        background: #fff !important;
+        color: #000 !important;
+        border: 1px solid #000 !important;
+        box-shadow: none !important;
+    }
+
+    /* Kill decorative pseudo elements that can create gray blocks */
+    *::before,
+    *::after {
+        box-shadow: none !important;
+        filter: none !important;
+    }
+
+    img,
+    svg,
+    canvas {
+        filter: none !important;
+    }
+
+    .no-print {
+        display: none !important;
+    }
+}

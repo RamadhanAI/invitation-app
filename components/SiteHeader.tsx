@@ -1,19 +1,11 @@
-// components/SiteHeader.tsx
-// components/SiteHeader.tsx
-'use client';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 
 export default function SiteHeader() {
-  const path = usePathname() || '/';
-
-  // Hide the nav on public form pages like /e/prime-expo-2025
-  const hideNav = path.startsWith('/e/');
-
   const items = [
-    { href: '/',             label: 'Home'    },
-    { href: '/scan',         label: 'Scanner' },
-    { href: '/admin/events', label: 'Admin'   },
+    { href: '/',      label: 'Home'   },
+    { href: '/scan',  label: 'Scanner'},
+    { href: '/admin', label: 'Admin'  },
+    { href: '/about', label: 'About'  },
   ];
 
   return (
@@ -24,25 +16,17 @@ export default function SiteHeader() {
           <span className="font-semibold tracking-tight">Invitation App</span>
         </Link>
 
-        {!hideNav && (
-          <nav className="flex items-center gap-2">
-            {items.map((it) => {
-              const active = path === it.href || (it.href !== '/' && path.startsWith(it.href));
-              return (
-                <Link
-                  key={it.href}
-                  href={it.href}
-                  className={[
-                    'a-btn a-btn--hero px-4 py-2 h-9 rounded-lg text-sm font-bold',
-                    active ? 'a-btn--accent' : 'a-btn--ghost'
-                  ].join(' ')}
-                >
-                  {it.label}
-                </Link>
-              );
-            })}
-          </nav>
-        )}
+        <nav className="flex items-center gap-2">
+          {items.map(it => (
+            <Link
+              key={it.href}
+              href={it.href}
+              className="px-4 py-2 text-sm font-bold rounded-lg a-btn a-btn--hero h-9 a-btn--ghost"
+            >
+              {it.label}
+            </Link>
+          ))}
+        </nav>
       </div>
     </header>
   );

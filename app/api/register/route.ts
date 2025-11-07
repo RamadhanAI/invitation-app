@@ -1,4 +1,5 @@
 // app/api/register/route.ts
+// app/api/register/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import * as crypto from 'node:crypto';
@@ -6,8 +7,7 @@ import * as crypto from 'node:crypto';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/* ---------- Dynamic optional modules (loose-typed on purpose) ---------- */
-
+/* ---------- Optional module types (intentionally minimal) ---------- */
 type AnyFn = (...args: any[]) => any;
 
 type RateLimitModule = {
@@ -28,26 +28,38 @@ type IcsModule = {
   buildIcs: AnyFn;
 };
 
-const loaders = {
+/* ---------- Per-key module map + loaders with exact types ---------- */
+type ModuleMap = {
+  rateLimit: RateLimitModule;
+  email: EmailModule;
+  tokens: TokensModule;
+  meta: MetaModule;
+  ics: IcsModule;
+};
+
+const loaders: { [K in keyof ModuleMap]: () => Promise<ModuleMap[K]> } = {
   rateLimit: () => import('@/lib/rateLimit') as Promise<RateLimitModule>,
   email: () => import('@/lib/email') as Promise<EmailModule>,
   tokens: () => import('@/lib/tokens') as Promise<TokensModule>,
   meta: () => import('@/lib/meta') as Promise<MetaModule>,
   ics: () => import('@/lib/ics') as Promise<IcsModule>,
-} as const;
+};
 
-async function tryLoad<K extends keyof typeof loaders>(
-  key: K
-): Promise<Awaited<ReturnType<(typeof loaders)[K]>> | null> {
+/* Overloads keep inference precise */
+async function tryLoad(key: 'rateLimit'): Promise<RateLimitModule | null>;
+async function tryLoad(key: 'email'): Promise<EmailModule | null>;
+async function tryLoad(key: 'tokens'): Promise<TokensModule | null>;
+async function tryLoad(key: 'meta'): Promise<MetaModule | null>;
+async function tryLoad(key: 'ics'): Promise<IcsModule | null>;
+async function tryLoad<K extends keyof ModuleMap>(key: K): Promise<ModuleMap[K] | null> {
   try {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore - dynamic module shape is intentionally loose
     return await loaders[key]();
   } catch {
     return null;
   }
 }
 
+/* ---------- Small helpers ---------- */
 const genToken = (bytes = 18) => crypto.randomBytes(bytes).toString('base64url');
 
 function ok(data: any, init: ResponseInit = {}) {
@@ -63,6 +75,15 @@ function originFrom(req: Request) {
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim();
   if (base) return base.replace(/\/+$/, '');
   return forwardedHost ? `${proto}://${forwardedHost}` : '';
+}
+
+function clientIp(req: Request) {
+  const xf = req.headers.get('x-forwarded-for') || '';
+  return xf.split(',')[0]?.trim() || '0.0.0.0';
+}
+
+function s(v: unknown, d = '') {
+  return typeof v === 'string' ? v.trim() : d;
 }
 
 /* ----------------------- Optional captcha checker ---------------------- */
@@ -98,11 +119,6 @@ async function verifyCaptchaIfEnabled(captchaToken: string | undefined, ip: stri
     return { ok: false as const, error: 'Captcha verification error' };
   }
   return { ok: true as const };
-}
-
-function clientIp(req: Request) {
-  const xf = req.headers.get('x-forwarded-for') || '';
-  return xf.split(',')[0]?.trim() || '0.0.0.0';
 }
 
 /* ------------------------------ Route ------------------------------ */
@@ -239,11 +255,43 @@ export async function POST(req: Request) {
         normMeta.company ??
         reqMeta.company,
       // ensure a non-VISITOR default
-      role: normMeta.role ?? reqMeta.role ?? 'ATTENDEE',
+      role: (normMeta.role ?? reqMeta.role ?? 'ATTENDEE') as string,
     };
 
-    // Optional ICS (kept for attachments)
+    // Derive display strings for URLs
+    const fullName =
+      s((finalMeta as any).fullName) ||
+      [s(finalMeta.firstName), s(finalMeta.lastName)].filter(Boolean).join(' ') ||
+      registration.email;
+
+    const eventTitle = event.title ?? 'Event';
+    const when = event.date ? new Date(event.date).toLocaleString() : '';
+    const venue = event.venue ?? '';
+    const whenWhere = [when, venue].filter(Boolean).join(' · ');
+
     const base = originFrom(req);
+
+    // Build explicit PNG URLs (role upper-cased)
+    const roleUpper = (finalMeta.role || 'ATTENDEE').toUpperCase();
+    const bust = Date.now().toString(); // image-proxy cache buster for emails
+
+    const ticketPngFrontUrl =
+      `${base}/api/ticket/png?token=${encodeURIComponent(registration.qrToken)}` +
+      `&variant=front&width=1200&dpi=300&v=${bust}` +
+      `&name=${encodeURIComponent(fullName)}` +
+      `&title=${encodeURIComponent(s(finalMeta.jobTitle))}` +
+      `&company=${encodeURIComponent(s(finalMeta.companyName))}` +
+      `&label=${encodeURIComponent(roleUpper)}` +
+      `&eventTitle=${encodeURIComponent(eventTitle)}` +
+      `&eventTime=${encodeURIComponent(whenWhere)}`;
+
+    const ticketPngBackUrl =
+      `${base}/api/ticket/png?token=${encodeURIComponent(registration.qrToken)}` +
+      `&variant=back&width=1200&dpi=300&v=${bust}`;
+
+    const printUrl = `${base}/t/${encodeURIComponent(registration.qrToken)}/print`;
+
+    // Optional ICS (kept for attachments)
     let icsStr = '';
     if (icsUtil?.buildIcs) {
       icsStr = icsUtil.buildIcs({
@@ -254,10 +302,8 @@ export async function POST(req: Request) {
         url: `${base}/e/${event.slug}`,
       }) as string;
     } else {
-      const dt = new Date(event.date ?? Date.now())
-        .toISOString()
-        .replace(/[-:]/g, '')
-        .split('.')[0] + 'Z';
+      const dt =
+        new Date(event.date ?? Date.now()).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
       icsStr = `BEGIN:VCALENDAR
 VERSION:2.0
 BEGIN:VEVENT
@@ -294,20 +340,26 @@ END:VCALENDAR`;
           token: registration.qrToken,
           meta: finalMeta,
           attachments,
-          appUrl: base, // allows lib/email to call /api/ticket/png
+          // URLs (explicit)
+          frontPngUrl: ticketPngFrontUrl,
+          backPngUrl: ticketPngBackUrl,
+          printUrl,
+          appUrl: base // legacy param kept for back-compat
         })
         .catch(() => {});
     }
 
-    // Return both a page URL and a PNG URL
+    // Return both a page URL and explicit PNG URLs
     const ticketPageUrl = `${base}/t/${encodeURIComponent(registration.qrToken)}`;
-    const ticketPngUrl = `${base}/api/ticket/png?token=${encodeURIComponent(registration.qrToken)}`;
 
     return ok({
       registration: {
         ...registration,
         ticketUrl: ticketPageUrl,
-        ticketPngUrl,
+        ticketPngUrl: ticketPngFrontUrl, // front by default
+        ticketPngFrontUrl,
+        ticketPngBackUrl,
+        printUrl,
       },
     });
   } catch (e) {

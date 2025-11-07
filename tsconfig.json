@@ -1,8 +1,6 @@
 {
   "compilerOptions": {
-    "noImplicitAny": true,
     "target": "ESNext",
-    "types": ["node"],  
     "lib": ["dom", "dom.iterable", "esnext"],
     "jsx": "preserve",
 
@@ -16,7 +14,9 @@
       "@components/*": ["components/*"],
       "@lib/*": ["lib/*"]
     },
+
     "strict": true,
+    "noImplicitAny": true,
     "skipLibCheck": true,
     "noEmit": true,
     "incremental": true,
@@ -25,14 +25,9 @@
     "resolveJsonModule": true,
     "allowJs": true,
 
+    "types": ["node"],
     "plugins": [{ "name": "next" }]
   },
-  "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts",
-    "types"
-  ],
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", "types"],
   "exclude": ["node_modules"]
 }

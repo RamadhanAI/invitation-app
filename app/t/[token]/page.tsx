@@ -11,7 +11,7 @@ import BadgePreviewFlip from '@/components/BadgePreviewFlip';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// ---------- data helpers (unchanged logic) ----------
+// ---------- data helpers ----------
 async function resolveRegistration(token: string) {
   if (isLikelyJwt(token)) {
     const p = await verifyTicket(token);
@@ -19,22 +19,8 @@ async function resolveRegistration(token: string) {
       const reg = await prisma.registration.findUnique({
         where: { id: p.sub },
         select: {
-          id: true,
-          email: true,
-          paid: true,
-          registeredAt: true,
-          qrToken: true,
-          meta: true,
-          event: {
-            select: {
-              title: true,
-              date: true,
-              venue: true,
-              currency: true,
-              price: true,
-              slug: true,
-            },
-          },
+          id: true, email: true, paid: true, registeredAt: true, qrToken: true, meta: true,
+          event: { select: { title: true, date: true, venue: true, currency: true, price: true, slug: true } },
         },
       });
       if (reg) return reg;
@@ -43,22 +29,8 @@ async function resolveRegistration(token: string) {
   return prisma.registration.findFirst({
     where: { qrToken: token },
     select: {
-      id: true,
-      email: true,
-      paid: true,
-      registeredAt: true,
-      qrToken: true,
-      meta: true,
-      event: {
-        select: {
-          title: true,
-          date: true,
-          venue: true,
-          currency: true,
-          price: true,
-          slug: true,
-        },
-      },
+      id: true, email: true, paid: true, registeredAt: true, qrToken: true, meta: true,
+      event: { select: { title: true, date: true, venue: true, currency: true, price: true, slug: true } },
     },
   });
 }
@@ -69,26 +41,18 @@ function parseMeta(meta: unknown): Record<string, any> {
     if (typeof meta === 'string') return JSON.parse(meta);
     if (typeof meta === 'object' && !Array.isArray(meta)) return meta as Record<string, any>;
     return {};
-  } catch {
-    return {};
-  }
+  } catch { return {}; }
 }
-function nameFromMeta(meta: unknown): string {
+const nameFromMeta = (meta: unknown) => {
   const m = parseMeta(meta);
   const first = (m.firstName ?? m.firstname ?? m.givenName ?? '').toString().trim();
-  const last = (m.lastName ?? m.lastname ?? m.familyName ?? '').toString().trim();
-  const full = (m.fullName ?? m.name ?? '').toString().trim();
+  const last  = (m.lastName ?? m.lastname ?? m.familyName ?? '').toString().trim();
+  const full  = (m.fullName ?? m.name ?? '').toString().trim();
   return (full || `${first} ${last}`.trim()).trim();
-}
-function jobFromMeta(meta: unknown): string {
-  const m = parseMeta(meta);
-  return (m.jobTitle ?? m.designation ?? m.title ?? '').toString().trim();
-}
-function companyFromMeta(meta: unknown): string {
-  const m = parseMeta(meta);
-  return (m.companyName ?? m.company ?? m.org ?? '').toString().trim();
-}
-function roleFromMeta(meta: unknown): string {
+};
+const jobFromMeta = (meta: unknown) => (parseMeta(meta).jobTitle ?? parseMeta(meta).designation ?? parseMeta(meta).title ?? '').toString().trim();
+const companyFromMeta = (meta: unknown) => (parseMeta(meta).companyName ?? parseMeta(meta).company ?? parseMeta(meta).org ?? '').toString().trim();
+function roleFromMeta(meta: unknown) {
   const m = parseMeta(meta);
   const raw = (m.role ?? m.badgeRole ?? m.ticketType ?? m.tier ?? '').toString().trim();
   const up = raw.toUpperCase();
@@ -120,19 +84,15 @@ export default async function TicketPage({
   const when = event.date ? new Date(event.date).toLocaleString() : '';
   const status = reg.paid || (event.price ?? 0) === 0 ? 'Paid / Free' : 'Unpaid';
 
-  // existing PNG url (kept)
   const pngUrl = `/api/ticket/png?token=${encodeURIComponent(reg.qrToken)}&dpi=300`;
-  // NEW: dedicated print page for this token
   const printUrl = `/t/${encodeURIComponent(reg.qrToken)}/print`;
 
-  // ---------- BADGE PREVIEW ----------
+  // Badge preview
   if ((searchParams?.view || '').toLowerCase() === 'badge') {
     return (
       <div className="grid p-4 text-white place-items-center">
         <div className="w-full max-w-3xl p-6 a-card banana-card md:p-8">
-          <div className="mb-4 text-xs font-semibold tracking-wide text-white/70">
-            BADGE PREVIEW
-          </div>
+          <div className="mb-4 text-xs font-semibold tracking-wide text-white/70">BADGE PREVIEW</div>
 
           <div className="flex items-center justify-center">
             <BadgePedestal className="w-[420px]">
@@ -152,21 +112,11 @@ export default async function TicketPage({
             <TicketActions pngUrl={pngUrl} printUrl={printUrl} />
           </div>
         </div>
-
-        <style
-          dangerouslySetInnerHTML={{
-            __html: `
-@media print {
-  html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-}
-`,
-          }}
-        />
       </div>
     );
   }
 
-  // ---------- TICKET VIEW ----------
+  // Ticket view
   const dataUrl = await QRCode.toDataURL(reg.qrToken, { margin: 1, scale: 8 });
 
   return (
@@ -178,8 +128,7 @@ export default async function TicketPage({
         </div>
 
         <div className="mt-2 text-sm text-white/70">
-          {when}
-          {event.venue ? ` · ${event.venue}` : ''}
+          {when}{event.venue ? ` · ${event.venue}` : ''}
         </div>
 
         <div className="grid grid-cols-2 gap-4 mt-6">
@@ -212,16 +161,6 @@ export default async function TicketPage({
       <div className="mt-6 text-xs text-white/40">
         Show this code at the entrance. Treat this token like a password.
       </div>
-
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `
-@media print {
-  html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-}
-`,
-        }}
-      />
     </div>
   );
 }

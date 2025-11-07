@@ -9,16 +9,12 @@ export default function TicketView({ token }: { token: string }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const svgWrapRef = useRef<HTMLDivElement>(null);
 
-  // Download the on-screen QR as SVG
   async function downloadSvg() {
     const svg = svgWrapRef.current?.querySelector('svg') as SVGSVGElement | null;
     if (!svg) return;
 
     const clone = svg.cloneNode(true) as SVGSVGElement;
-    // Ensure proper namespace so it opens cleanly in editors
-    if (!clone.getAttribute('xmlns')) {
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-    }
+    if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
 
     const xml = new XMLSerializer().serializeToString(clone);
     const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' });
@@ -28,19 +24,15 @@ export default function TicketView({ token }: { token: string }) {
     a.href = url;
     a.download = `ticket-qr-${token.slice(0, 8)}.svg`;
     a.click();
-
     URL.revokeObjectURL(url);
   }
 
-  // Rasterize the QR to a high-resolution PNG (default scale 4 => 880px)
   async function downloadPng(scale = 4) {
     const svg = svgWrapRef.current?.querySelector('svg') as SVGSVGElement | null;
     if (!svg) return;
 
     const clone = svg.cloneNode(true) as SVGSVGElement;
-    if (!clone.getAttribute('xmlns')) {
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-    }
+    if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
 
     const xml = new XMLSerializer().serializeToString(clone);
     const img = new Image();
@@ -51,10 +43,8 @@ export default function TicketView({ token }: { token: string }) {
       img.onerror = rej;
     });
 
-    // Prefer explicit size used by QRCodeSVG; fall back to 220.
     const baseSize =
-      (clone.width?.baseVal?.value || (clone.getAttribute('width') ? Number(clone.getAttribute('width')) : 220)) ||
-      220;
+      (clone.width?.baseVal?.value || (clone.getAttribute('width') ? Number(clone.getAttribute('width')) : 220)) || 220;
 
     const w = Math.round(baseSize * scale);
     const h = Math.round(baseSize * scale);
@@ -66,7 +56,7 @@ export default function TicketView({ token }: { token: string }) {
     const ctx = canvas.getContext('2d')!;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.fillStyle = '#ffffff'; // white background so the QR is printable
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(img, 0, 0, w, h);
 
@@ -76,117 +66,41 @@ export default function TicketView({ token }: { token: string }) {
     a.click();
   }
 
-  // Preferred printing path:
-  // Open the dedicated print page that already self-triggers window.print() and
-  // is styled for a single CR80 page. This avoids CSP/frame issues.
-  function printCard() {
+  // Open the dedicated print route (no hydration, crisp QR)
+  function openPrint() {
     const url = `/t/${encodeURIComponent(token)}/print?auto=1`;
     window.open(url, '_blank', 'noopener,noreferrer,width=900,height=700');
   }
 
   return (
-    <>
-      <div
-        id="print-ticket"
-        ref={cardRef}
-        className="banana-card banana-sheen-hover w-[min(95vw,420px)] p-5 border border-white/10"
-      >
-        <div className="px-3 py-2 mb-3 text-xs font-extrabold tracking-wide badge-head rounded-xl text-slate-900">
-          TICKET QR
-        </div>
-
-        <div
-          ref={svgWrapRef}
-          className="mx-auto my-2 qr-frame"
-          aria-label="QR code"
-          role="img"
-        >
-          <QRCodeSVG
-            value={token}
-            size={220}
-            level="H"
-            includeMargin
-            fgColor="#000000"
-            bgColor="#ffffff"
-          />
-        </div>
-
-        <div className="mt-3 text-xs break-all text-white/60">
-          Token: <span className="font-mono">{token}</span>
-        </div>
-
-        <div className="flex flex-wrap gap-2 mt-4 no-print">
-          <button
-            type="button"
-            className="a-btn a-btn--accent"
-            onClick={() => downloadPng(4)}
-          >
-            Download PNG (Hi-Res)
-          </button>
-
-          <button
-            type="button"
-            className="a-btn"
-            onClick={downloadSvg}
-          >
-            Download SVG
-          </button>
-
-          <button
-            type="button"
-            className="a-btn a-btn--ghost"
-            onClick={printCard}
-            title="Open dedicated print page"
-          >
-            Print
-          </button>
-        </div>
+    <div
+      id="print-ticket"
+      ref={cardRef}
+      className="banana-card banana-sheen-hover w-[min(95vw,420px)] p-5 border border-white/10"
+    >
+      <div className="px-3 py-2 mb-3 text-xs font-extrabold tracking-wide badge-head rounded-xl text-slate-900">
+        TICKET QR
       </div>
 
-      {/* Fallback: If someone triggers window.print() from this page,
-         lock down styles so only the ticket card prints and it doesn't paginate. */}
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `
-@media print {
-  /* Don't paginate; ensure colors are preserved. */
-  html, body {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-    margin: 0 !important;
-    padding: 0 !important;
-    background: #000 !important;
-    overflow: hidden !important;
-  }
+      <div ref={svgWrapRef} className="mx-auto my-2 qr-frame" aria-label="QR code" role="img">
+        <QRCodeSVG value={token} size={220} level="H" includeMargin fgColor="#000000" bgColor="#ffffff" />
+      </div>
 
-  /* Hide everything by default... */
-  body * { visibility: hidden !important; }
+      <div className="mt-3 text-xs break-all text-white/60">
+        Token: <span className="font-mono">{token}</span>
+      </div>
 
-  /* ...except the ticket card. */
-  #print-ticket, #print-ticket * {
-    visibility: visible !important;
-  }
-
-  /* Center the card and remove shadows/borders so it fits one sheet. */
-  #print-ticket {
-    position: fixed;
-    inset: 0;
-    margin: auto;
-    box-shadow: none !important;
-    border: none !important;
-    width: 86mm !important;    /* CR80 width */
-    height: 54mm !important;   /* CR80 height */
-  }
-
-  /* Force a single physical page when printing this view directly. */
-  @page {
-    size: 86mm 54mm;
-    margin: 0;
-  }
-}
-          `,
-        }}
-      />
-    </>
+      <div className="flex flex-wrap gap-2 mt-4 no-print">
+        <button type="button" className="a-btn a-btn--accent" onClick={() => downloadPng(4)}>
+          Download PNG (Hi-Res)
+        </button>
+        <button type="button" className="a-btn" onClick={downloadSvg}>
+          Download SVG
+        </button>
+        <button type="button" className="a-btn a-btn--ghost" onClick={openPrint} title="Open printable badge">
+          Print
+        </button>
+      </div>
+    </div>
   );
 }

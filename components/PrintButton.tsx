@@ -1,23 +1,17 @@
 // components/PrintButton.tsx
+// components/PrintButton.tsx
 'use client';
 
-export default function PrintButton({ auto }: { auto?: boolean }) {
-  function handlePrint() {
-    // if the route was opened with ?auto=1 it already printed on load
-    if (!auto) {
-      try { window.print(); } catch {}
-    }
-  }
-
+export default function PrintButton({ href }: { href: string }) {
   return (
-    <button
-      type="button"
-      className="btn"
-      onClick={handlePrint}
-      // small safety for browsers that block programmatic print
-      aria-label="Print badge"
+    <a
+      className="btn a-btn--accent"
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="Open printable badge"
     >
       Print
-    </button>
+    </a>
   );
 }

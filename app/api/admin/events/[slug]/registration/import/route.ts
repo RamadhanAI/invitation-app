@@ -94,7 +94,7 @@ export async function POST(req: Request, { params }: { params: { slug: string } 
   const body = await readBody(req);
   if (!body.ok) return NextResponse.json({ error: body.error, details: body.details }, { status: 400 });
 
-  let rows = body.rows;
+  const rows = body.rows;
   if (!rows?.length) return NextResponse.json({ error: 'No rows' }, { status: 400 });
 
   // normalize → { email, price, meta, qrToken? }
