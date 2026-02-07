@@ -3,6 +3,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import * as crypto from 'node:crypto';
+import { resolveBadgeConfig, badgeConfigToQuery, normalizeBrand } from '@/lib/badgeConfig';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,32 +11,14 @@ export const dynamic = 'force-dynamic';
 /* ---------- Optional module types (intentionally minimal) ---------- */
 type AnyFn = (...args: any[]) => any;
 
-type RateLimitModule = {
-  rateLimit: AnyFn;
-  ipKey: AnyFn;
-};
-type EmailModule = {
-  sendRegistrationEmail: AnyFn;
-};
-type TokensModule = {
-  signTicket: AnyFn;
-  verifyTicket: AnyFn;
-};
-type MetaModule = {
-  normalizeMeta: AnyFn;
-};
-type IcsModule = {
-  buildIcs: AnyFn;
-};
+type RateLimitModule = { rateLimit: AnyFn; ipKey: AnyFn };
+type EmailModule = { sendRegistrationEmail: AnyFn };
+type TokensModule = { signTicket: AnyFn; verifyTicket: AnyFn; isLikelyJwt?: AnyFn };
+type MetaModule = { normalizeMeta: AnyFn };
+type IcsModule = { buildIcs: AnyFn };
 
 /* ---------- Per-key module map + loaders with exact types ---------- */
-type ModuleMap = {
-  rateLimit: RateLimitModule;
-  email: EmailModule;
-  tokens: TokensModule;
-  meta: MetaModule;
-  ics: IcsModule;
-};
+type ModuleMap = { rateLimit: RateLimitModule; email: EmailModule; tokens: TokensModule; meta: MetaModule; ics: IcsModule };
 
 const loaders: { [K in keyof ModuleMap]: () => Promise<ModuleMap[K]> } = {
   rateLimit: () => import('@/lib/rateLimit') as Promise<RateLimitModule>,
@@ -86,6 +69,27 @@ function s(v: unknown, d = '') {
   return typeof v === 'string' ? v.trim() : d;
 }
 
+function isObj(v: unknown): v is Record<string, any> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function normJson(v: unknown): Record<string, any> {
+  try {
+    if (!v) return {};
+    if (typeof v === 'string') return JSON.parse(v);
+    if (isObj(v)) return v;
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeRole(r?: string) {
+  const up = (r || '').trim().toUpperCase();
+  const ALLOW = new Set(['ATTENDEE', 'VIP', 'SPEAKER', 'STAFF', 'MEDIA', 'EXHIBITOR', 'SPONSOR']);
+  return ALLOW.has(up) ? up : 'ATTENDEE';
+}
+
 /* ----------------------- Optional captcha checker ---------------------- */
 async function verifyCaptchaIfEnabled(captchaToken: string | undefined, ip: string) {
   const hSecret = process.env.HCAPTCHA_SECRET;
@@ -125,7 +129,7 @@ async function verifyCaptchaIfEnabled(captchaToken: string | undefined, ip: stri
 export async function POST(req: Request) {
   try {
     const rate = await tryLoad('rateLimit');
-    const email = await tryLoad('email');
+    const emailMod = await tryLoad('email');
     const tokens = await tryLoad('tokens');
     const metaUtil = await tryLoad('meta');
     const icsUtil = await tryLoad('ics');
@@ -140,7 +144,6 @@ export async function POST(req: Request) {
       if (!rl.ok) return err(429, 'Too many attempts. Try again in a minute.');
     }
 
-    // Parse body
     const body = (await req.json().catch(() => ({}))) as {
       email?: string;
       slug?: string;
@@ -151,7 +154,7 @@ export async function POST(req: Request) {
 
     const emailRaw = body.email;
     const slug = body.slug || body.eventSlug;
-    const meta = typeof body.meta === 'object' || typeof body.meta === 'string' ? body.meta : {};
+    const rawMeta = body.meta;
     const captchaToken = body.captchaToken;
 
     if (!emailRaw || !slug) return err(400, 'Missing email or slug');
@@ -160,7 +163,7 @@ export async function POST(req: Request) {
     const cap = await verifyCaptchaIfEnabled(captchaToken, clientIp(req));
     if (!cap.ok) return err(400, cap.error || 'Captcha failed');
 
-    // Load event
+    // Load event + organizer brand
     const event = await prisma.event.findUnique({
       where: { slug },
       select: {
@@ -172,7 +175,7 @@ export async function POST(req: Request) {
         currency: true,
         venue: true,
         capacity: true,
-        organizer: { select: { brand: true } },
+        organizer: { select: { brand: true, name: true } },
       },
     });
     if (!event) return err(404, 'Event not found');
@@ -184,6 +187,29 @@ export async function POST(req: Request) {
     }
 
     const normEmail = emailRaw.trim().toLowerCase();
+
+    // Normalize incoming meta
+    const reqMeta0 =
+      (metaUtil?.normalizeMeta?.(rawMeta) as any) ??
+      (typeof rawMeta === 'string' ? normJson(rawMeta) : (rawMeta as any)) ??
+      {};
+    const reqMeta = isObj(reqMeta0) ? reqMeta0 : {};
+
+    // ✅ Resolve badge config per organizer (default + per-event override) + optional request override (meta.badge)
+    const brandObj = normalizeBrand(event.organizer?.brand);
+    const badgeCfg = resolveBadgeConfig({
+      organizerBrand: brandObj,
+      eventSlug: event.slug,
+      requestBadgeOverride: reqMeta.badge, // optional
+    });
+
+    // Store a stable snapshot into registration.meta.badge
+    const role = normalizeRole(s(reqMeta.role, 'ATTENDEE'));
+    const mergedMeta: Record<string, any> = {
+      ...reqMeta,
+      role,
+      badge: badgeCfg,
+    };
 
     // Idempotent by (eventId,email)
     let registration = await prisma.registration.findUnique({
@@ -199,70 +225,81 @@ export async function POST(req: Request) {
           price: event.price ?? 0,
           paid: (event.price ?? 0) === 0,
           qrToken: genToken(),
-          meta: typeof meta === 'string' ? meta : (meta as object),
+          meta: mergedMeta,
         },
         select: { id: true, email: true, paid: true, qrToken: true, meta: true },
       });
-    } else if (meta && typeof meta === 'object') {
-      // Merge any new meta keys on repeat submissions (handle legacy string)
-      const existing =
-        (typeof registration.meta === 'string'
-          ? (() => {
-              try {
-                return JSON.parse(registration.meta as any);
-              } catch {
-                return {};
-              }
-            })()
-          : (registration.meta as any)) || {};
-      const merged = { ...existing, ...(meta as any) };
+    } else {
+      const existing = normJson(registration.meta);
+      const nextMeta = { ...existing, ...reqMeta, role, badge: badgeCfg };
       registration = await prisma.registration.update({
         where: { id: registration.id },
-        data: { meta: merged },
+        data: { meta: nextMeta },
         select: { id: true, email: true, paid: true, qrToken: true, meta: true },
       });
     }
 
-    // Upgrade to JWT token if configured
+    // Upgrade to JWT token if configured (safe)
     if (process.env.TICKET_JWT_SECRET && tokens?.signTicket && tokens?.verifyTicket) {
-      const valid = !!tokens.verifyTicket(registration.qrToken);
-      if (!valid) {
+      const looksJwt = (() => {
+        try {
+          if (typeof tokens.isLikelyJwt === 'function') return !!tokens.isLikelyJwt(registration.qrToken);
+          return registration.qrToken.split('.').length === 3;
+        } catch {
+          return false;
+        }
+      })();
+
+      let isValidJwt = false;
+      if (looksJwt) {
+        try {
+          isValidJwt = !!tokens.verifyTicket(registration.qrToken);
+        } catch {
+          isValidJwt = false;
+        }
+      }
+
+      if (!isValidJwt) {
         const jwtToken = tokens.signTicket({
           sub: registration.id,
           eventId: event.id,
           email: registration.email,
         }) as string;
+
         await prisma.registration.update({
           where: { id: registration.id },
           data: { qrToken: jwtToken },
         });
+
         registration.qrToken = jwtToken;
       }
     }
 
-    // Normalize meta for email/template
-    const normMeta =
-      (metaUtil?.normalizeMeta?.(registration.meta) as any) ??
-      ((registration.meta as any) ?? {});
-    const reqMeta = (metaUtil?.normalizeMeta?.(meta) as any) ?? ((meta as any) ?? {});
-    const finalMeta = {
-      firstName: normMeta.firstName ?? reqMeta.firstName,
-      lastName: normMeta.lastName ?? reqMeta.lastName,
-      jobTitle: normMeta.jobTitle ?? reqMeta.jobTitle,
-      companyName:
-        normMeta.companyName ??
-        reqMeta.companyName ??
-        normMeta.company ??
-        reqMeta.company,
-      // ensure a non-VISITOR default
-      role: (normMeta.role ?? reqMeta.role ?? 'ATTENDEE') as string,
-    };
+    // Normalize meta for rendering/email
+    const storedMeta0 = (metaUtil?.normalizeMeta?.(registration.meta) as any) ?? normJson(registration.meta);
+    const storedMeta = isObj(storedMeta0) ? storedMeta0 : {};
+    storedMeta.role = normalizeRole(s(storedMeta.role, role));
+    storedMeta.badge = badgeCfg;
 
-    // Derive display strings for URLs
-    const fullName =
-      s((finalMeta as any).fullName) ||
-      [s(finalMeta.firstName), s(finalMeta.lastName)].filter(Boolean).join(' ') ||
-      registration.email;
+    const first = s(storedMeta.firstName);
+const last = s(storedMeta.lastName);
+const baseName = [first, last].filter(Boolean).join(' ').trim();
+
+const badgeName = s(storedMeta.badgeName);
+const title = s(storedMeta.title);
+
+// Rule:
+// 1) If badgeName exists, use it exactly (don’t auto-prefix title).
+// 2) Else use [title + baseName] if available.
+// 3) Else fallback to baseName or email.
+const fullName =
+  badgeName ||
+  [title, baseName].filter(Boolean).join(' ').trim() ||
+  baseName ||
+  registration.email;
+
+    const jobTitle = s(storedMeta.jobTitle);
+    const company = s(storedMeta.companyName) || s(storedMeta.company);
 
     const eventTitle = event.title ?? 'Event';
     const when = event.date ? new Date(event.date).toLocaleString() : '';
@@ -270,24 +307,24 @@ export async function POST(req: Request) {
     const whenWhere = [when, venue].filter(Boolean).join(' · ');
 
     const base = originFrom(req);
-
-    // Build explicit PNG URLs (role upper-cased)
-    const roleUpper = (finalMeta.role || 'ATTENDEE').toUpperCase();
-    const bust = Date.now().toString(); // image-proxy cache buster for emails
+    const bust = Date.now().toString();
+    const badgeQs = badgeConfigToQuery(badgeCfg);
 
     const ticketPngFrontUrl =
       `${base}/api/ticket/png?token=${encodeURIComponent(registration.qrToken)}` +
       `&variant=front&width=1200&dpi=300&v=${bust}` +
       `&name=${encodeURIComponent(fullName)}` +
-      `&title=${encodeURIComponent(s(finalMeta.jobTitle))}` +
-      `&company=${encodeURIComponent(s(finalMeta.companyName))}` +
-      `&label=${encodeURIComponent(roleUpper)}` +
+      `&title=${encodeURIComponent(jobTitle)}` +
+      `&company=${encodeURIComponent(company)}` +
+      `&label=${encodeURIComponent(storedMeta.role)}` +
       `&eventTitle=${encodeURIComponent(eventTitle)}` +
-      `&eventTime=${encodeURIComponent(whenWhere)}`;
+      `&eventTime=${encodeURIComponent(whenWhere)}` +
+      badgeQs;
 
     const ticketPngBackUrl =
       `${base}/api/ticket/png?token=${encodeURIComponent(registration.qrToken)}` +
-      `&variant=back&width=1200&dpi=300&v=${bust}`;
+      `&variant=back&width=1200&dpi=300&v=${bust}` +
+      badgeQs;
 
     const printUrl = `${base}/t/${encodeURIComponent(registration.qrToken)}/print`;
 
@@ -302,8 +339,7 @@ export async function POST(req: Request) {
         url: `${base}/e/${event.slug}`,
       }) as string;
     } else {
-      const dt =
-        new Date(event.date ?? Date.now()).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      const dt = new Date(event.date ?? Date.now()).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
       icsStr = `BEGIN:VCALENDAR
 VERSION:2.0
 BEGIN:VEVENT
@@ -313,6 +349,7 @@ URL:${base}/e/${event.slug}
 END:VEVENT
 END:VCALENDAR`;
     }
+
     const attachments = [
       {
         content: Buffer.from(icsStr).toString('base64'),
@@ -323,12 +360,11 @@ END:VCALENDAR`;
     ];
 
     // Email (optional + non-blocking)
-    if (email?.sendRegistrationEmail) {
-      const brand = (event.organizer?.brand ?? {}) as any;
-      email
+    if (emailMod?.sendRegistrationEmail) {
+      emailMod
         .sendRegistrationEmail({
           to: registration.email,
-          brand,
+          brand: brandObj, // organizer.brand JSON (already normalized)
           event: {
             title: event.title,
             date: event.date ?? undefined,
@@ -338,32 +374,31 @@ END:VCALENDAR`;
             slug: event.slug,
           },
           token: registration.qrToken,
-          meta: finalMeta,
+          meta: storedMeta,
           attachments,
-          // URLs (explicit)
           frontPngUrl: ticketPngFrontUrl,
           backPngUrl: ticketPngBackUrl,
           printUrl,
-          appUrl: base // legacy param kept for back-compat
+          appUrl: base,
+          // optional if your email.ts supports it:
+          badgeConfig: badgeCfg,
         })
         .catch(() => {});
     }
 
-    // Return both a page URL and explicit PNG URLs
-    const ticketPageUrl = `${base}/t/${encodeURIComponent(registration.qrToken)}`;
+    const ticketPageUrl = `${base}/t/${encodeURIComponent(registration.qrToken)}/print`;
 
     return ok({
       registration: {
         ...registration,
         ticketUrl: ticketPageUrl,
-        ticketPngUrl: ticketPngFrontUrl, // front by default
+        ticketPngUrl: ticketPngFrontUrl,
         ticketPngFrontUrl,
         ticketPngBackUrl,
         printUrl,
       },
     });
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.error('[register] error:', e);
     return err(500, 'Internal error');
   }

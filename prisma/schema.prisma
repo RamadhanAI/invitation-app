@@ -1,4 +1,5 @@
 // prisma/schema.prisma
+// prisma/schema.prisma
 
 generator client {
   provider = "prisma-client-js"
@@ -6,8 +7,8 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL") // pooled (:6543) for runtime
-  directUrl = env("DIRECT_URL") // direct (:5432) for prisma CLI
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ----------------------------------------------------------
@@ -22,20 +23,37 @@ model Organizer {
   brand     Json?
   createdAt DateTime @default(now())
 
-  events Event[]
-  users  OrganizerUser[]
+  // "pending" | "active" | "suspended"
+  status    String   @default("pending")
+
+  events     Event[]
+  users      OrganizerUser[]
+  templates  EventTemplate[] // ✅ relation
 }
 
 model OrganizerUser {
   id          String   @id @default(uuid())
   organizerId String
   email       String
+  name        String?
   role        String   @default("admin") // "admin" | "editor" | "scanner"
-  createdAt   DateTime @default(now())
+
+  passwordHash String?
+
+  isActive     Boolean  @default(true)
+  lastLoginAt  DateTime?
+
+  inviteTokenHash String?
+  inviteExpiresAt DateTime?
+
+  createdAt DateTime @default(now())
 
   organizer Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
 
   @@unique([organizerId, email])
+  @@index([organizerId])
+  @@index([email])
+  @@index([inviteExpiresAt])
 }
 
 // ----------------------------------------------------------
@@ -44,10 +62,17 @@ model OrganizerUser {
 
 model EventTemplate {
   id          String   @id @default(uuid())
-  name        String   @unique(map: "EventTemplate_name_key") // keep old DB constraint
+  name        String
   description String?
   defaults    Json
   createdAt   DateTime @default(now())
+
+  organizerId String?
+  organizer   Organizer? @relation(fields: [organizerId], references: [id], onDelete: SetNull)
+
+  // ✅ Unique per organizer (NULL organizerId is allowed for legacy rows)
+  @@unique([organizerId, name], name: "eventtemplate_org_name")
+  @@index([organizerId, createdAt])
 }
 
 // ----------------------------------------------------------
@@ -72,20 +97,18 @@ model Event {
 
   registrations    Registration[]
   payments         Payment[]
-  stations         Station[] // physical/virtual scanners ("Gate A iPad", "VIP Door")
-  attendanceEvents AttendanceEvent[] // immutable scan log rows
+  stations         Station[]
+  attendanceEvents AttendanceEvent[]
 
   @@index([organizerId])
 }
 
-// Each physical / virtual scanner device.
-// Security can later say: "IN VIP ENTRANCE" or "OUT HALL EXIT" because we tag scans with Station.name.
 model Station {
-  id         String  @id @default(uuid()) // text UUID
+  id         String  @id @default(uuid())
   eventId    String
-  name       String // e.g. "VIP Entrance", "Hall 4 Exit"
-  code       String // short code guard types when arming device
-  secretHash String // hashed shared secret/password
+  name       String
+  code       String
+  secretHash String
   active     Boolean @default(true)
 
   createdAt DateTime @default(now())
@@ -96,10 +119,6 @@ model Station {
   @@unique([eventId, code], name: "station_event_code")
   @@index([eventId])
 }
-
-// ----------------------------------------------------------
-// REGISTRATION / TICKET HOLDER (live state)
-// ----------------------------------------------------------
 
 model Registration {
   id String @id @default(uuid())
@@ -114,26 +133,14 @@ model Registration {
   qrToken      String   @unique
   registeredAt DateTime @default(now())
 
-  // ---- LIVE DOOR STATE ----
-  // attended: they've been let in at least once (first successful IN)
-  attended Boolean @default(false)
-
-  // scannedAt: most recent IN timestamp (latest entry)
-  scannedAt DateTime?
-
-  // scannedBy: which station/door/device did that IN
-  scannedBy String?
-
-  // checkedOutAt: most recent OUT timestamp
+  attended     Boolean   @default(false)
+  scannedAt    DateTime?
+  scannedBy    String?
   checkedOutAt DateTime?
-
-  // checkedOutBy: which station/door/device did that OUT
   checkedOutBy String?
 
-  // Captured profile/custom fields (name/company/etc.)
   meta Json?
 
-  // backref to immutable scan log
   attendanceEvents AttendanceEvent[]
 
   @@unique([eventId, email], name: "eventId_email")
@@ -145,14 +152,6 @@ model Registration {
   @@index([eventId, checkedOutBy])
 }
 
-// ----------------------------------------------------------
-// ATTENDANCE EVENT (immutable audit trail)
-// One row per "beep". Never edited after insert.
-// action: "IN", "OUT", "DENY"
-// stationLabel: snapshot of Station.name at that moment
-// at: exact timestamp
-// ----------------------------------------------------------
-
 model AttendanceEvent {
   id String @id @default(cuid())
 
@@ -160,9 +159,9 @@ model AttendanceEvent {
   registrationId String
   qrToken        String
 
-  action        String // "IN" | "OUT" | "DENY"
-  stationLabel  String? // e.g. "VIP Entrance"
-  scannedByUser String? // optional: staff email if manually approved
+  action        String
+  stationLabel  String?
+  scannedByUser String?
   at            DateTime @default(now())
 
   registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
@@ -172,10 +171,6 @@ model AttendanceEvent {
   @@index([qrToken, at])
   @@index([registrationId, at])
 }
-
-// ----------------------------------------------------------
-// PAYMENTS
-// ----------------------------------------------------------
 
 model Payment {
   id        String  @id @default(uuid())
@@ -194,4 +189,26 @@ model Payment {
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@index([eventId, status])
+}
+
+// ----------------------------------------------------------
+// REQUEST DEMO / ACCESS PIPELINE (PUBLIC FORM)
+// ----------------------------------------------------------
+
+model DemoRequest {
+  id           String   @id @default(uuid())
+  name         String
+  email        String
+  company      String
+  role         String?
+  phone        String?
+  timezone     String?
+  availability Json?
+  notes        String?
+
+  status       String   @default("new")
+  createdAt    DateTime @default(now())
+
+  @@index([email])
+  @@index([status, createdAt])
 }

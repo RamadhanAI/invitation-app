@@ -1,56 +1,98 @@
+// RegistrationForm.tsx
+// components/RegistrationForm.tsx
 'use client';
 
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import Script from 'next/script'; // load captcha scripts only if site keys exist
+import Script from 'next/script';
 import BadgePedestal from '@/components/BadgePedestal';
+import Combobox from '@/components/form/Combobox';
+import { COUNTRY_OPTIONS } from '@/lib/countries';
+import { DESIGNATION_OPTIONS } from '@/lib/designations';
+import { TITLE_OPTIONS } from '@/lib/titles';
 
-// Keep dynamic import light to prevent client bundle bloat.
-const BadgePreviewFlip: any = dynamic(() => import('./BadgePreviewFlip'), { ssr: false });
+const BadgePreviewFlip = dynamic(() => import('./BadgePreviewFlip'), { ssr: false });
 
-type Props = { eventSlug: string; sponsorLogoUrl?: string };
-
-const NATIONALITIES = ['United Arab Emirates', 'Saudi Arabia', 'USA', 'UK', 'Other'];
-const DESIGNATION   = ['Executive', 'Director', 'Manager', 'Associate', 'Other'];
-const COUNTRIES     = ['United Arab Emirates', 'Saudi Arabia', 'USA', 'UK', 'Other'];
+type Props = {
+  eventSlug: string;
+  sponsorLogoUrl?: string;
+  /** optional future: organizer default + event override snapshot passed to client */
+  badge?: any;
+};
 
 const BADGE_WIDTH = 400;
-// Only NEXT_PUBLIC_* is readable on the client:
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || '/api';
+const RECAPTCHA_SITEKEY = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY;
+const HCAPTCHA_SITEKEY = process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY;
 
-// Optional site keys (only one is needed). If none are set, server treats captcha as disabled.
-const RECAPTCHA_SITEKEY  = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY;
-const HCAPTCHA_SITEKEY   = process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY;
+type Role = 'ATTENDEE' | 'VIP' | 'STAFF' | 'SPEAKER' | 'MEDIA';
 
-export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Props) {
+export default function RegistrationForm({ eventSlug, sponsorLogoUrl, badge }: Props) {
   const [email, setEmail] = useState('');
   const [confirmEmail, setConfirmEmail] = useState('');
+
+  const [title, setTitle] = useState('');
+  const [titleOther, setTitleOther] = useState('');
+
   const [firstName, setFirst] = useState('');
   const [lastName, setLast] = useState('');
+  const [badgeName, setBadgeName] = useState('');
+  const [badgeNameTouched, setBadgeNameTouched] = useState(false);
+
   const [company, setCompany] = useState('');
   const [jobTitle, setJobTitle] = useState('');
-  const [nationality, setNationality] = useState('');
+
+  const [nationalityCode, setNationalityCode] = useState('');
+  const [residenceCode, setResidenceCode] = useState('');
+
   const [designation, setDesignation] = useState('');
-  const [country, setCountry] = useState('');
+  const [designationOther, setDesignationOther] = useState('');
+
   const [dial, setDial] = useState('+971');
   const [mobile, setMobile] = useState('');
 
-  // default badge role (never "VISITOR")
-  const [role] = useState<'ATTENDEE' | 'VIP' | 'STAFF' | 'SPEAKER' | 'MEDIA'>('ATTENDEE');
+  const [role] = useState<Role>('ATTENDEE');
 
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeKind, setNoticeKind] = useState<'ok' | 'err' | null>(null);
+
   const aborter = useRef<AbortController | null>(null);
   const botRef = useRef<HTMLInputElement>(null);
   const [realToken, setRealToken] = useState<string | null>(null);
 
-  const fullName    = firstName || lastName ? `${firstName} ${lastName}`.trim() : 'FULL NAME';
-  const lineTitle   = jobTitle || 'JOB TITLE';
-  const lineCompany = company || 'COMPANY NAME';
-
   const [pulseKey, setPulseKey] = useState(0);
   const bumpPulse = () => setPulseKey((k) => k + 1);
+
+  const titleResolved = useMemo(() => {
+    if (title === 'Other') return titleOther.trim();
+    return title.trim();
+  }, [title, titleOther]);
+
+  useEffect(() => {
+    if (badgeNameTouched) return;
+
+    const base = [firstName, lastName].filter(Boolean).join(' ').trim();
+    if (!base) return;
+
+    const suggested = [titleResolved, base].filter(Boolean).join(' ').trim();
+    if (!suggested) return;
+
+    if (badgeName === suggested) return;
+
+    setBadgeName(suggested);
+  }, [titleResolved, firstName, lastName, badgeNameTouched, badgeName]);
+
+  const computedName = useMemo(() => {
+    if (badgeName.trim()) return badgeName.trim();
+    const base = [firstName, lastName].filter(Boolean).join(' ').trim();
+    const titled = [titleResolved, base].filter(Boolean).join(' ').trim();
+    return titled || 'FULL NAME';
+  }, [badgeName, firstName, lastName, titleResolved]);
+
+  const lineTitle = jobTitle || 'JOB TITLE';
+  const lineCompany = company || 'COMPANY NAME';
 
   const emailOk = /\S+@\S+\.\S+/.test(email);
   const emailsMatch =
@@ -58,14 +100,17 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
     !!confirmEmail &&
     email.trim().toLowerCase() === confirmEmail.trim().toLowerCase();
 
+  const designationResolved = designation === 'Other' ? designationOther.trim() : designation;
+
   const requiredOk = Boolean(
     firstName.trim() &&
       lastName.trim() &&
       jobTitle.trim() &&
-      nationality &&
+      nationalityCode &&
+      residenceCode &&
       designation &&
-      country &&
-      company.trim()
+      company.trim() &&
+      (designation !== 'Other' || designationOther.trim())
   );
 
   const canSubmit = useMemo(
@@ -77,34 +122,39 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
     return () => aborter.current?.abort();
   }, []);
 
-  // --- Invisible captcha helper (no UI changes). Prefers reCAPTCHA v3 if present, else hCaptcha. ---
   async function getCaptchaToken(): Promise<string | null> {
     const w = window as any;
+    if (!RECAPTCHA_SITEKEY && !HCAPTCHA_SITEKEY) return null;
+
     try {
-      if (RECAPTCHA_SITEKEY) {
-        // reCAPTCHA v3
-        if (w.grecaptcha?.execute) {
-          await w.grecaptcha.ready();
-          const tok = await w.grecaptcha.execute(RECAPTCHA_SITEKEY, { action: 'register' });
-          if (tok) return tok as string;
-        }
+      if (RECAPTCHA_SITEKEY && w.grecaptcha?.ready && w.grecaptcha?.execute) {
+        await new Promise<void>((resolve) => w.grecaptcha.ready(() => resolve()));
+        const tok = await w.grecaptcha.execute(RECAPTCHA_SITEKEY, { action: 'register' });
+        if (tok) return String(tok);
       }
-      if (HCAPTCHA_SITEKEY) {
-        // hCaptcha (invisible)
-        if (w.hcaptcha?.execute) {
-          if (!w.__hcId) {
-            const el = document.getElementById('hc-root');
-            if (el) {
-              w.__hcId = w.hcaptcha.render('hc-root', { sitekey: HCAPTCHA_SITEKEY, size: 'invisible' });
-            }
+
+      if (HCAPTCHA_SITEKEY && w.hcaptcha?.render && w.hcaptcha?.execute) {
+        if (!w.__hcId) {
+          const el = document.getElementById('hc-root');
+          if (el) {
+            w.__hcId = w.hcaptcha.render('hc-root', {
+              sitekey: HCAPTCHA_SITEKEY,
+              size: 'invisible',
+            });
           }
-          const tok = await w.hcaptcha.execute(w.__hcId);
-          if (tok) return tok as string;
+        }
+
+        if (w.__hcId !== undefined && w.__hcId !== null) {
+          const maybe = w.hcaptcha.execute(w.__hcId, { async: true });
+          if (typeof maybe === 'string') return maybe;
+          if (maybe && typeof maybe.then === 'function') {
+            const tok = await maybe;
+            if (tok) return String(tok);
+          }
         }
       }
-    } catch {
-      // swallow; server will still accept when captcha secrets are not set
-    }
+    } catch {}
+
     return null;
   }
 
@@ -121,7 +171,6 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
     setNoticeKind(null);
     setRealToken(null);
 
-    // Fetch a captcha token ONLY if site keys exist (invisible; no layout change)
     const captchaToken = await getCaptchaToken();
 
     try {
@@ -132,20 +181,28 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
         body: JSON.stringify({
           slug: eventSlug,
           email: email.trim(),
-          // Send token; server ignores when secrets are not set
           captchaToken,
           meta: {
+            title: titleResolved || undefined,
+            badgeName: badgeName.trim() || undefined,
+
             firstName: firstName.trim() || undefined,
             lastName: lastName.trim() || undefined,
             company: company.trim() || undefined,
             companyName: company.trim() || undefined,
             jobTitle: jobTitle.trim() || undefined,
-            nationality,
-            designation,
-            country,
+
+            nationalityCode,
+            residenceCode,
+
+            designation: designationResolved || undefined,
+
             dial,
             mobile,
             role,
+
+            sponsorLogoUrl: sponsorLogoUrl || undefined,
+            badge: badge || undefined,
           },
         }),
       });
@@ -167,14 +224,12 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
     }
   }
 
-  // Unified print sheet: prints FRONT (with QR) + BACK (centered sponsor logo)
   function openPrint(auto = true) {
     if (!realToken) return;
     const url = `/t/${encodeURIComponent(realToken)}/print${auto ? '?auto=1' : ''}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
-  // Optional front PNG download (if you still want a single asset link).
   function frontPngUrl() {
     if (!realToken) return '#';
     const params = new URLSearchParams({
@@ -182,17 +237,46 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
       variant: 'front',
       width: '1200',
       dpi: '300',
-      name: fullName,
-      title: jobTitle,
-      company,
+      name: computedName, // ✅ always the computed display name
+      title: jobTitle || '',
+      company: company || '',
       label: role,
     });
+
+    // keep sponsor precedence
+    if (sponsorLogoUrl) params.set('sponsorLogoUrl', sponsorLogoUrl);
+
+    const b = badge || {};
+    if (typeof b.template === 'string') params.set('template', b.template);
+    if (typeof b.bg === 'string') params.set('bg', b.bg);
+    if (typeof b.accent === 'string') params.set('accent', b.accent);
+    if (typeof b.logoUrl === 'string') params.set('logoUrl', b.logoUrl);
+    if (typeof b.sponsorLogoUrl === 'string' && !params.get('sponsorLogoUrl')) {
+      params.set('sponsorLogoUrl', b.sponsorLogoUrl);
+    }
+
     return `/api/ticket/png?${params.toString()}`;
   }
 
+  const countryOptions = useMemo(
+    () =>
+      COUNTRY_OPTIONS.map((c) => ({
+        value: c.code,
+        label: `${c.flag ? c.flag + ' ' : ''}${c.name}`,
+        hint: c.code,
+      })),
+    []
+  );
+
+  const designationOptions = useMemo(
+    () => DESIGNATION_OPTIONS.map((d) => ({ value: d, label: d })),
+    []
+  );
+
+  const titleOptions = useMemo(() => TITLE_OPTIONS.map((t) => ({ value: t, label: t })), []);
+
   return (
     <>
-      {/* Load captcha scripts only when keys exist (no UI impact) */}
       {RECAPTCHA_SITEKEY && (
         <Script
           src={`https://www.google.com/recaptcha/api.js?render=${RECAPTCHA_SITEKEY}`}
@@ -200,19 +284,20 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
         />
       )}
       {HCAPTCHA_SITEKEY && (
-        <Script
-          src="https://js.hcaptcha.com/1/api.js?render=explicit"
-          strategy="afterInteractive"
-        />
+        <Script src="https://js.hcaptcha.com/1/api.js?render=explicit" strategy="afterInteractive" />
       )}
-      {/* Offscreen mount for invisible hCaptcha (does not affect layout) */}
       <div id="hc-root" style={{ display: 'none' }} />
 
       <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.45fr)] xl:grid-cols-[minmax(0,1fr)_minmax(400px,0.5fr)] items-start">
-        {/* LEFT: FORM */}
         <form
           onSubmit={onSubmit}
-          className="w-full overflow-hidden rounded-2xl border border-white/10 bg-[rgba(15,15,20,0.6)] backdrop-blur-xl shadow-[0_30px_80px_rgba(0,0,0,0.8),0_0_120px_rgba(139,92,246,0.22)] relative"
+          className={[
+            'w-full overflow-hidden rounded-2xl relative',
+            // ✅ lighter luxe glass surface
+            'border border-white/12',
+            'bg-[rgba(255,255,255,0.06)] backdrop-blur-xl',
+            'shadow-[0_30px_80px_rgba(0,0,0,0.65),0_0_120px_rgba(212,175,55,0.14)]',
+          ].join(' ')}
           autoComplete="off"
           noValidate
         >
@@ -220,7 +305,7 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
             <span className="relative z-10">Please fill out the registration form below</span>
           </div>
 
-          <div className="p-4 space-y-6 text-sm md:p-6 text-white/80">
+          <div className="p-4 space-y-6 text-sm md:p-6 text-white/85">
             <input
               ref={botRef}
               type="text"
@@ -232,23 +317,75 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
             />
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <Combobox
+                  label="Title"
+                  value={title}
+                  onChange={(v) => {
+                    setTitle(v);
+                    if (v !== 'Other') setTitleOther('');
+                    bumpPulse();
+                  }}
+                  options={[{ value: '', label: 'Select…' }, ...titleOptions]}
+                />
+              </div>
+
+              {title === 'Other' ? (
+                <div className="md:col-span-2">
+                  <label className="label">Specify title</label>
+                  <input
+                    className="input"
+                    value={titleOther}
+                    onChange={(e) => {
+                      setTitleOther(e.target.value);
+                      bumpPulse();
+                    }}
+                    placeholder="e.g., Prince, Coach, H.H."
+                  />
+                </div>
+              ) : null}
+
               <div>
                 <label className="label">First Name *</label>
                 <input
                   className="input"
                   value={firstName}
-                  onChange={(e) => { setFirst(e.target.value); bumpPulse(); }}
+                  onChange={(e) => {
+                    setFirst(e.target.value);
+                    bumpPulse();
+                  }}
                   required
                 />
               </div>
+
               <div>
                 <label className="label">Last Name *</label>
                 <input
                   className="input"
                   value={lastName}
-                  onChange={(e) => { setLast(e.target.value); bumpPulse(); }}
+                  onChange={(e) => {
+                    setLast(e.target.value);
+                    bumpPulse();
+                  }}
                   required
                 />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="label">Name on badge (optional)</label>
+                <input
+                  className="input"
+                  value={badgeName}
+                  onChange={(e) => {
+                    setBadgeName(e.target.value);
+                    setBadgeNameTouched(true);
+                    bumpPulse();
+                  }}
+                  placeholder="Leave blank to use your title + full name"
+                />
+                <div className="mt-1 text-[11px] text-white/55">
+                  Example: “Dr. Amina”, “Sheikh Khalid”, or a shorter name.
+                </div>
               </div>
 
               <div>
@@ -257,105 +394,147 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
                   className="input"
                   type="email"
                   value={email}
-                  onChange={(e) => { setEmail(e.target.value); bumpPulse(); }}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    bumpPulse();
+                  }}
                   required
-                  aria-invalid={email ? (!emailOk).toString() as any : undefined}
+                  aria-invalid={email ? !emailOk : undefined}
                 />
+                {email && !emailOk && <div className="mt-1 text-xs text-red-300">Enter a valid email</div>}
               </div>
+
               <div>
                 <label className="label">Confirm Email Address *</label>
                 <input
                   className="input"
                   type="email"
                   value={confirmEmail}
-                  onChange={(e) => { setConfirmEmail(e.target.value); bumpPulse(); }}
+                  onChange={(e) => {
+                    setConfirmEmail(e.target.value);
+                    bumpPulse();
+                  }}
                   required
-                  aria-invalid={confirmEmail ? (!emailsMatch).toString() as any : undefined}
+                  aria-invalid={confirmEmail ? !emailsMatch : undefined}
                 />
-                {confirmEmail && !emailsMatch && (
-                  <div className="mt-1 text-xs text-red-400">Emails do not match</div>
-                )}
+                {confirmEmail && !emailsMatch && <div className="mt-1 text-xs text-red-300">Emails do not match</div>}
               </div>
 
               <div>
-                <label className="label">Nationality *</label>
-                <select
-                  className="input"
-                  value={nationality}
-                  onChange={(e) => { setNationality(e.target.value); bumpPulse(); }}
+                <Combobox
+                  label="Nationality (as on passport) *"
+                  value={nationalityCode}
+                  onChange={(v) => {
+                    setNationalityCode(v);
+                    bumpPulse();
+                  }}
+                  options={[{ value: '', label: 'Select…' }, ...countryOptions]}
                   required
-                >
-                  <option value="">Select…</option>
-                  {NATIONALITIES.map((n) => <option key={n} value={n}>{n}</option>)}
-                </select>
+                />
               </div>
+
               <div>
-                <label className="label">Designation Level *</label>
-                <select
-                  className="input"
+                <Combobox
+                  label="Country of residence (where you live) *"
+                  value={residenceCode}
+                  onChange={(v) => {
+                    setResidenceCode(v);
+                    bumpPulse();
+                  }}
+                  options={[{ value: '', label: 'Select…' }, ...countryOptions]}
+                  required
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <Combobox
+                  label="Designation *"
                   value={designation}
-                  onChange={(e) => { setDesignation(e.target.value); bumpPulse(); }}
+                  onChange={(v) => {
+                    setDesignation(v);
+                    if (v !== 'Other') setDesignationOther('');
+                    bumpPulse();
+                  }}
+                  options={[{ value: '', label: 'Select…' }, ...designationOptions]}
                   required
-                >
-                  <option value="">Select…</option>
-                  {DESIGNATION.map((d) => <option key={d} value={d}>{d}</option>)}
-                </select>
+                />
               </div>
 
-              <div>
+              {designation === 'Other' ? (
+                <div className="md:col-span-2">
+                  <label className="label">Specify designation *</label>
+                  <input
+                    className="input"
+                    value={designationOther}
+                    onChange={(e) => {
+                      setDesignationOther(e.target.value);
+                      bumpPulse();
+                    }}
+                    placeholder="e.g., Board Member, Advisor"
+                    required
+                  />
+                </div>
+              ) : null}
+
+              <div className="md:col-span-2">
                 <label className="label">Job Title *</label>
                 <input
                   className="input"
                   value={jobTitle}
-                  onChange={(e) => { setJobTitle(e.target.value); bumpPulse(); }}
+                  onChange={(e) => {
+                    setJobTitle(e.target.value);
+                    bumpPulse();
+                  }}
                   required
                 />
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 gap-3 md:col-span-2">
                 <div className="col-span-1">
                   <label className="label">Code</label>
                   <select
                     className="input"
                     value={dial}
-                    onChange={(e) => { setDial(e.target.value); bumpPulse(); }}
+                    onChange={(e) => {
+                      setDial(e.target.value);
+                      bumpPulse();
+                    }}
                   >
                     <option value="+971">+971</option>
                     <option value="+966">+966</option>
+                    <option value="+965">+965</option>
+                    <option value="+973">+973</option>
+                    <option value="+974">+974</option>
+                    <option value="+968">+968</option>
                     <option value="+1">+1</option>
                     <option value="+44">+44</option>
                   </select>
                 </div>
+
                 <div className="col-span-2">
                   <label className="label">Mobile Number</label>
                   <input
                     className="input"
                     value={mobile}
-                    onChange={(e) => { setMobile(e.target.value); bumpPulse(); }}
+                    onChange={(e) => {
+                      setMobile(e.target.value);
+                      bumpPulse();
+                    }}
                     inputMode="tel"
                     pattern="[0-9\s()+-]*"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="label">Country of Residence *</label>
-                <select
-                  className="input"
-                  value={country}
-                  onChange={(e) => { setCountry(e.target.value); bumpPulse(); }}
-                  required
-                >
-                  <option value="">Select…</option>
-                  {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div>
+              <div className="md:col-span-2">
                 <label className="label">Company Name *</label>
                 <input
                   className="input"
                   value={company}
-                  onChange={(e) => { setCompany(e.target.value); bumpPulse(); }}
+                  onChange={(e) => {
+                    setCompany(e.target.value);
+                    bumpPulse();
+                  }}
                   required
                 />
               </div>
@@ -367,29 +546,21 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
               </button>
 
               {notice && (
-                <div className={`mt-3 text-sm ${noticeKind === 'err' ? 'text-red-300' : 'text-white/80'}`} aria-live="polite">
+                <div
+                  className={`mt-3 text-sm ${noticeKind === 'err' ? 'text-red-300' : 'text-white/85'}`}
+                  aria-live="polite"
+                >
                   {notice}
                 </div>
               )}
 
               {realToken && (
                 <div className="flex flex-wrap gap-2 mt-4">
-                  {/* Single print button: prints BOTH sides (front with QR + back sponsor) */}
-                  <button
-                    type="button"
-                    className="text-sm a-btn a-btn--accent"
-                    onClick={() => openPrint(true)}
-                  >
+                  <button type="button" className="text-sm a-btn a-btn--accent" onClick={() => openPrint(true)}>
                     Print Badge (Front + Back)
                   </button>
 
-                  {/* Optional: keep one PNG link if desired */}
-                  <a
-                    className="text-sm a-btn a-btn--ghost"
-                    href={frontPngUrl()}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
+                  <a className="text-sm a-btn a-btn--ghost" href={frontPngUrl()} target="_blank" rel="noreferrer">
                     Download Front PNG
                   </a>
                 </div>
@@ -398,25 +569,31 @@ export default function RegistrationFormFlip({ eventSlug, sponsorLogoUrl }: Prop
           </div>
         </form>
 
-        {/* RIGHT: Preview */}
         <div
-          className="lg:sticky lg:top-6 flex flex-col items-center w-full rounded-2xl banana-card banana-sheen-hover p-4 md:p-5 border border-[hsla(var(--banana-sun)/0.12)] shadow-[0_40px_120px_rgba(183,224,0,0.12),0_40px_120px_rgba(0,0,0,0.8)] bg-[radial-gradient(120%_120%_at_0%_0%,hsla(var(--banana-sun)/0.08)_0%,rgba(0,0,0,.8)_40%,rgba(0,0,0,.85)_100%)]"
-          style={{ minWidth: BADGE_WIDTH + 48 + 'px', maxWidth: 'min(480px,90vw)' }}
+          className={[
+            'lg:sticky lg:top-6 flex flex-col items-center w-full rounded-2xl',
+            'p-4 md:p-5 border border-white/12',
+            // ✅ lighter preview surface (still luxe)
+            'bg-[rgba(255,255,255,0.05)] backdrop-blur-xl',
+            'shadow-[0_40px_120px_rgba(0,0,0,0.65),0_0_120px_rgba(212,175,55,0.12)]',
+          ].join(' ')}
+          style={{ minWidth: `${BADGE_WIDTH + 48}px`, maxWidth: 'min(480px,90vw)' }}
         >
           <BadgePedestal pulseKey={pulseKey} className="flex justify-center w-full">
             <BadgePreviewFlip
               width={BADGE_WIDTH}
               token={realToken ?? undefined}
-              fullName={fullName}
+              fullName={computedName}
               jobTitle={lineTitle}
               companyName={lineCompany}
-              role={role as any}
+              role={role}
               sponsorLogoUrl={sponsorLogoUrl}
+              badge={badge}
             />
           </BadgePedestal>
 
           {realToken && (
-            <div className="mt-4 text-[10px] text-white/50 text-center max-w-[38ch] leading-relaxed">
+            <div className="mt-4 text-[10px] text-white/55 text-center max-w-[38ch] leading-relaxed">
               This is your live access badge. The same QR was emailed to you. You can re-open or re-print any time.
             </div>
           )}

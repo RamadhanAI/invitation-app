@@ -1,13 +1,12 @@
 // components/BadgePedestal.tsx
+// components/BadgePedestal.tsx
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 type Props = {
   children: React.ReactNode;
-  /** bump to trigger a brief glow/tilt pulse when inputs change */
   pulseKey?: number | string;
-  /** optional: force reduced motion */
   reduceMotion?: boolean;
   className?: string;
 };
@@ -20,33 +19,29 @@ export default function BadgePedestal({
 }: Props) {
   const cardRef = useRef<HTMLDivElement>(null);
 
-  // Respect user/system preference in addition to the prop
-  const shouldReduce =
-    reduceMotion ||
-    (typeof window !== 'undefined' &&
-      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) ||
-    false;
+  const shouldReduce = useMemo(() => {
+    if (reduceMotion) return true;
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  }, [reduceMotion]);
 
   useEffect(() => {
-    if (shouldReduce) return; // no pulse if reduced motion requested
+    if (shouldReduce) return;
     const el = cardRef.current;
     if (!el) return;
 
-    // Restart the pulse animation safely
+    // Restart animation reliably
     el.classList.remove('pedestal-pulse');
-
-    // Force reflow so the animation reliably restarts even on rapid changes
+    // Force reflow
     void el.offsetHeight;
 
-    // Add on next frame for consistent style flush
     const raf = requestAnimationFrame(() => {
       el.classList.add('pedestal-pulse');
     });
 
-    // Ensure it doesn’t get stuck if key changes rapidly
     const tid = window.setTimeout(() => {
       el.classList.remove('pedestal-pulse');
-    }, 520);
+    }, 560);
 
     return () => {
       cancelAnimationFrame(raf);

@@ -204,3 +204,17 @@ export async function verifySecret(
   // do its final plaintext safeEqual fallback for legacy rows.
   return false;
 }
+// --- Password helpers (OrganizerUser / admin passwords) ---
+// We re-use the same strong hashing scheme as scanner secrets.
+// Keeps one hashing standard across the whole app.
+
+export async function hashPassword(passwordPlain: string): Promise<string> {
+  return hashSecret(passwordPlain);
+}
+
+export async function verifyPassword(
+  passwordPlain: string,
+  storedHash: string | null | undefined
+): Promise<boolean> {
+  return verifySecret(passwordPlain, storedHash);
+}

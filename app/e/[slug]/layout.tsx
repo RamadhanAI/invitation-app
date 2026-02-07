@@ -1,3 +1,4 @@
+// app/e/[slug]/layout.tsx
 import '../../globals.css';
 
 export const runtime = 'nodejs';

@@ -1,38 +1,56 @@
 // app/admin/BrandVars.tsx
 // app/admin/BrandVars.tsx
 import { prisma } from '@/lib/db';
+import { getAdminSession } from '@/lib/session';
 
-function normalizeBrand(val: unknown): Record<string, unknown> {
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+function normalizeBrand(val: unknown): Record<string, any> {
   if (typeof val === 'string') {
     try {
       const p = JSON.parse(val);
-      if (p && typeof p === 'object' && !Array.isArray(p)) return p as Record<string, unknown>;
+      if (p && typeof p === 'object' && !Array.isArray(p)) return p as Record<string, any>;
     } catch {}
   }
-  if (val && typeof val === 'object' && !Array.isArray(val)) return val as Record<string, unknown>;
+  if (val && typeof val === 'object' && !Array.isArray(val)) return val as Record<string, any>;
   return {};
 }
 
 export default async function BrandVars() {
-  // get organizer brand so admin header gradients match the org
+  const sess = getAdminSession();
+
+  // Tenant admins ALWAYS have oid (enforced by getAdminSession()).
+  // Superadmin only has oid when impersonating.
+  const targetOrgId =
+    sess?.role === 'superadmin'
+      ? (sess.oid || null) // impersonation target
+      : (sess?.oid || null); // tenant's organizer
+
+  // If superadmin is not impersonating, we don't want "random tenant branding".
+  // Use safe defaults (platform look).
   let brandObj: Record<string, any> = {};
-  try {
-    const org = await prisma.organizer.findFirst({
-      select: { brand: true },
-    });
-    brandObj = normalizeBrand(org?.brand) as any;
-  } catch {
-    brandObj = {};
+
+  if (targetOrgId) {
+    try {
+      const org = await prisma.organizer.findUnique({
+        where: { id: targetOrgId },
+        select: { brand: true },
+      });
+      brandObj = normalizeBrand(org?.brand);
+    } catch {
+      brandObj = {};
+    }
   }
 
-  const primary    = brandObj.primary    || '#111827';
-  const secondary  = brandObj.secondary  || '#F59E0B';
-  const button     = brandObj.button     || '#111827';
-  const headerBlue = brandObj.headerBlue || '#1D4ED8';
+  const primary = brandObj.primary || '#D4AF37'; // gold
+  const secondary = brandObj.secondary || '#F59E0B'; // amber
+  const button = brandObj.button || '#8b5cf6'; // violet
+  const headerBlue = brandObj.headerBlue || '#7aa2ff'; // luxury blue
 
-  // Inject into :root; admin.css uses these custom props.
   const cssVars = `
-    :root{
+    #admin-root{
       --brand-primary:${primary};
       --brand-secondary:${secondary};
       --brand-button:${button};
@@ -40,10 +58,5 @@ export default async function BrandVars() {
     }
   `;
 
-  return (
-    <style
-      dangerouslySetInnerHTML={{ __html: cssVars }}
-      suppressHydrationWarning
-    />
-  );
+  return <style dangerouslySetInnerHTML={{ __html: cssVars }} suppressHydrationWarning />;
 }

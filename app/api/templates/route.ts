@@ -2,6 +2,7 @@
 // app/api/templates/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { getAdminSession } from '@/lib/session';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -65,72 +66,138 @@ const BUILTIN = [
   },
 ] as const;
 
-function ok<T>(data: T, status = 200) {
-  return NextResponse.json(data as any, { status, headers: { 'cache-control': 'no-store' } });
+function json(data: any, status = 200) {
+  return NextResponse.json(data, { status, headers: { 'cache-control': 'no-store' } });
 }
 
+function isObj(v: any): v is Record<string, any> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * GET behavior:
+ * - No session: built-ins only.
+ * - Superadmin: built-ins + ALL DB templates.
+ * - Tenant admin/editor: built-ins + templates scoped to sess.oid (organizerId).
+ */
 export async function GET() {
+  const sess = getAdminSession();
+  const role = String(sess?.role || '');
+  const isSuper = role === 'superadmin';
+  const oid = (sess?.oid || '').toString().trim();
+
   try {
+    if (!sess) return json({ ok: true, templates: [...BUILTIN] });
+
+    // ✅ Tenant users must have an organizer scope.
+    if (!isSuper && !oid) return json({ ok: true, templates: [...BUILTIN] });
+
+    const where = isSuper ? undefined : ({ organizerId: oid } as any);
+
     const db = await prisma.eventTemplate.findMany({
+      ...(where ? { where } : {}),
       orderBy: { createdAt: 'desc' },
-      select: { id: true, name: true, description: true, defaults: true },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        defaults: true,
+        organizerId: true,
+      },
+      take: 500,
     });
-    return ok({ templates: [...BUILTIN, ...db] });
+
+    return json({ ok: true, templates: [...BUILTIN, ...db] });
   } catch (e: any) {
-    // DB unreachable → still return built-ins so the UI doesn't break
     if (e?.code === 'P1001') {
       console.warn('[templates] DB unreachable (P1001). Returning built-ins.');
-      return ok({ templates: [...BUILTIN] });
+      return json({ ok: true, templates: [...BUILTIN] });
     }
     console.warn('[templates] GET error:', e?.message || e);
-    return ok({ templates: [...BUILTIN] });
+    return json({ ok: true, templates: [...BUILTIN] });
   }
 }
 
+/**
+ * POST behavior:
+ * - Requires admin session.
+ * - Superadmin can create templates for any organizer:
+ *   body.organizerId (optional) or falls back to first organizer in DB.
+ * - Tenant admin/editor can create only for their own organizer (sess.oid).
+ * - Scanner cannot create templates.
+ */
 export async function POST(req: Request) {
-  const provided = (req.headers.get('x-api-key') || '').trim();
-  if (!provided) return ok({ error: 'Unauthorized' }, 401);
+  const sess = getAdminSession();
+  if (!sess) return json({ ok: false, error: 'Unauthorized' }, 401);
+
+  const role = String(sess.role || '');
+  const isSuper = role === 'superadmin';
+  const canWrite = isSuper || role === 'admin' || role === 'editor';
+  if (!canWrite) return json({ ok: false, error: 'Forbidden' }, 403);
 
   try {
-    const adminKey = (process.env.ADMIN_KEY || process.env.NEXT_PUBLIC_ADMIN_KEY || '').trim();
+    const body = (await req.json().catch(() => ({}))) as any;
+    const name = (body?.name || '').toString().trim();
+    const description = (body?.description || '').toString().trim() || null;
+    const defaults = body?.defaults;
 
-    // Determine organizerId (admin can create for the first organizer)
-    let organizerId: string | null = null;
-    if (adminKey && provided === adminKey) {
-      const org = await prisma.organizer.findFirst({ select: { id: true } });
-      organizerId = org?.id ?? null;
-    } else {
-      const org = await prisma.organizer.findUnique({
-        where: { apiKey: provided },
-        select: { id: true },
-      });
-      if (!org) return ok({ error: 'Unauthorized' }, 401);
-      organizerId = org.id;
+    if (!name || !isObj(defaults)) {
+      return json({ ok: false, error: 'Provide name and defaults (object)' }, 400);
     }
 
-    const body = await req.json().catch(() => ({}));
-    const { name, description = '', defaults } = body || {};
-    if (!name || !defaults || typeof defaults !== 'object' || Array.isArray(defaults)) {
-      return ok({ error: 'Provide name and defaults (object)' }, 400);
+    // ✅ Determine organizerId for the new template (NEVER null for tenant writes)
+    let organizerId: string | null = null;
+
+    if (isSuper) {
+      const requested = (body?.organizerId || '').toString().trim();
+      if (requested) {
+        const org = await prisma.organizer.findUnique({
+          where: { id: requested },
+          select: { id: true },
+        });
+        if (!org) return json({ ok: false, error: 'Organizer not found' }, 404);
+        organizerId = org.id;
+      } else {
+        const org = await prisma.organizer.findFirst({
+          select: { id: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        organizerId = org?.id ?? null;
+      }
+    } else {
+      organizerId = (sess.oid || '').toString().trim() || null;
+    }
+
+    if (!organizerId) {
+      return json({ ok: false, error: 'No organizer scope available' }, 400);
     }
 
     const tpl = await prisma.eventTemplate.create({
       data: {
+        organizerId, // ✅ always set
         name,
         description,
         defaults,
-        // @ts-ignore — include if your schema has it, Prisma ignores unknown keys otherwise.
-        organizerId,
+      } as any,
+      select: {
+        id: true,
+        organizerId: true,
+        name: true,
+        description: true,
+        defaults: true,
       },
-      select: { id: true, name: true, description: true, defaults: true },
     });
 
-    return ok({ ok: true, template: tpl }, 201);
+    return json({ ok: true, template: tpl }, 201);
   } catch (e: any) {
     if (e?.code === 'P1001') {
-      return ok({ error: 'Database unreachable (pooler). Try again or use PRISMA_USE_DIRECT=1 for dev.' }, 503);
+      return json({ ok: false, error: 'Database unreachable. Check DATABASE_URL/DIRECT_URL.' }, 503);
+    }
+    // Unique constraint (your @@unique([organizerId, name]) can trigger this)
+    if (e?.code === 'P2002') {
+      return json({ ok: false, error: 'Template name already exists for this organizer.' }, 409);
     }
     console.error('[templates] POST error:', e);
-    return ok({ error: 'Internal error' }, 500);
+    return json({ ok: false, error: 'Internal error' }, 500);
   }
 }

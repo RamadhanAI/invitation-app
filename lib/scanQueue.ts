@@ -1,57 +1,50 @@
 // lib/scanQueue.ts
-// lib/scanQueue.ts
-export type QueuedItem = { token: string; scannerId: string; at: number };
+export type QueuedScan = {
+  id: string;
+  slug: string;
+  token: string;
+  action?: 'IN' | 'OUT';
+  at: number;
+};
 
 const keyFor = (slug: string) => `scanQueue:${slug}`;
 
-export function enqueueScan(slug: string, token: string, scannerId: string, at?: number) {
-  if (!slug) return;
-  const key = keyFor(slug);
-  const q: QueuedItem[] = JSON.parse(localStorage.getItem(key) || '[]');
-  q.push({ token, scannerId, at: at ?? Date.now() });
-  localStorage.setItem(key, JSON.stringify(q));
+function uid() {
+  return (crypto as any)?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 }
 
-export async function flushQueue(slug: string): Promise<number> {
-  if (!slug) return 0;
+export function enqueueScan(slug: string, token: string, action: 'IN' | 'OUT' = 'IN') {
   const key = keyFor(slug);
-  const scannerKey = localStorage.getItem('SCANNER_KEY') || '';
-  const q: QueuedItem[] = JSON.parse(localStorage.getItem(key) || '[]');
+  const q: QueuedScan[] = JSON.parse(localStorage.getItem(key) || '[]');
+  q.push({ id: uid(), slug, token, action, at: Date.now() });
+  localStorage.setItem(key, JSON.stringify(q.slice(-500)));
+}
+
+export function getQueueSize(slug: string) {
+  const key = keyFor(slug);
+  const q: QueuedScan[] = JSON.parse(localStorage.getItem(key) || '[]');
+  return q.length;
+}
+
+export async function flushQueue(slug: string) {
+  const key = keyFor(slug);
+  const q: QueuedScan[] = JSON.parse(localStorage.getItem(key) || '[]');
   if (!q.length) return 0;
 
-  const kept: QueuedItem[] = [];
+  const kept: QueuedScan[] = [];
   for (const item of q) {
     try {
-      const res = await fetch(`/api/events/${encodeURIComponent(slug)}/attendance`, {
+      const res = await fetch('/api/scanner/checkin', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          authorization: `Bearer ${scannerKey}`,
-        },
-        body: JSON.stringify({ token: item.token, attended: true, scannerId: item.scannerId }),
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: item.token, action: item.action }),
       });
       if (!res.ok) kept.push(item);
     } catch {
       kept.push(item);
     }
   }
+
   localStorage.setItem(key, JSON.stringify(kept));
   return q.length - kept.length;
-}
-
-export function startQueueFlusher(slug: string, intervalMs = 5000) {
-  let stopped = false;
-  const tick = () => { if (!stopped) void flushQueue(slug); };
-
-  const id = window.setInterval(tick, intervalMs);
-  tick(); // first run
-
-  const onFocus = () => tick();
-  window.addEventListener('focus', onFocus);
-
-  return () => {
-    stopped = true;
-    window.clearInterval(id);
-    window.removeEventListener('focus', onFocus);
-  };
 }

@@ -1,4 +1,5 @@
 // app/t/[token]/print/route.ts
+// app/t/[token]/print/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
@@ -7,7 +8,11 @@ export const runtime = 'nodejs';
 
 const norm = (v: unknown) => {
   if (!v) return {};
-  if (typeof v === 'string') { try { return JSON.parse(v); } catch {} }
+  if (typeof v === 'string') {
+    try {
+      return JSON.parse(v);
+    } catch {}
+  }
   if (typeof v === 'object' && !Array.isArray(v)) return v as Record<string, any>;
   return {};
 };
@@ -44,36 +49,63 @@ export async function GET(req: Request, ctx: { params: { token: string } }) {
   }
 
   const m = norm(reg.meta);
+  const badge = (m.badge && typeof m.badge === 'object' && !Array.isArray(m.badge)) ? (m.badge as any) : {};
+
   const name =
     s(m.fullName) ||
     [s(m.firstName), s(m.lastName)].filter(Boolean).join(' ') ||
     reg.email;
-  const job     = s(m.jobTitle);
+
+  const job = s(m.jobTitle);
   const company = s(m.companyName) || s((m as any).company);
-  const role    = (s((m as any).role) || 'ATTENDEE').toUpperCase();
+
+  const role = (s((m as any).role) || 'ATTENDEE').toUpperCase();
+
+  const sponsorLogoUrl =
+    s(badge.sponsorLogoUrl) || s(m.sponsorLogoUrl) || '';
 
   const eventTitle = reg.event?.title ?? 'Event';
-  const when  = reg.event?.date ? new Date(reg.event.date).toLocaleString() : '';
+  const when = reg.event?.date ? new Date(reg.event.date).toLocaleString() : '';
   const venue = reg.event?.venue ?? '';
   const whenWhere = [when, venue].filter(Boolean).join(' · ');
 
   const base = appBase(req);
 
-  const pngFront = `${base}/api/ticket/png?token=${encodeURIComponent(token)}&variant=front` +
-    `&name=${encodeURIComponent(name)}` +
-    `&title=${encodeURIComponent(job)}` +
-    `&company=${encodeURIComponent(company)}` +
-    `&label=${encodeURIComponent(role)}` +
-    `&eventTitle=${encodeURIComponent(eventTitle)}` +
-    `&eventTime=${encodeURIComponent(whenWhere)}` +
-    `&width=1200&dpi=300`;
+  const badgeParams = new URLSearchParams();
+  if (s(badge.template)) badgeParams.set('template', s(badge.template));
+  if (s(badge.bg)) badgeParams.set('bg', s(badge.bg));
+  if (s(badge.accent)) badgeParams.set('accent', s(badge.accent));
+  if (s(badge.logoUrl)) badgeParams.set('logoUrl', s(badge.logoUrl));
+  if (sponsorLogoUrl) badgeParams.set('sponsorLogoUrl', sponsorLogoUrl);
 
-  const pngBack = `${base}/api/ticket/png?token=${encodeURIComponent(token)}&variant=back` +
-    `&name=${encodeURIComponent(name)}` +
-    `&label=${encodeURIComponent(role)}` +
-    `&eventTitle=${encodeURIComponent(eventTitle)}` +
-    `&eventTime=${encodeURIComponent(whenWhere)}` +
-    `&width=1200&dpi=300`;
+  const frontParams = new URLSearchParams({
+    token: token,
+    variant: 'front',
+    name,
+    title: job,
+    company,
+    label: role,
+    eventTitle,
+    eventTime: whenWhere,
+    width: '1200',
+    dpi: '300',
+  });
+  badgeParams.forEach((v, k) => frontParams.set(k, v));
+
+  const backParams = new URLSearchParams({
+    token: token,
+    variant: 'back',
+    name,
+    label: role,
+    eventTitle,
+    eventTime: whenWhere,
+    width: '1200',
+    dpi: '300',
+  });
+  badgeParams.forEach((v, k) => backParams.set(k, v));
+
+  const pngFront = `${base}/api/ticket/png?${frontParams.toString()}`;
+  const pngBack = `${base}/api/ticket/png?${backParams.toString()}`;
 
   const auto = /(^|[?&])auto=1($|&)/.test(req.url);
 
@@ -104,8 +136,10 @@ export async function GET(req: Request, ctx: { params: { token: string } }) {
   .badge img { display: block; width: 86mm; height: auto; image-rendering: auto; }
   .caption { font-size: 10px; color: #333; text-align: center; margin: 2mm 0 0; }
   .fold-hint { text-align:center; font-size:10px; color:#666; margin: 2mm 0 0; }
-  @media screen { body { background:#0b0d10; color:#e5e7eb; }
-    .sheet { background:#11151b; border-radius:12px; padding:10mm; margin:10mm auto; } }
+  @media screen {
+    body { background:#0b0d10; color:#e5e7eb; }
+    .sheet { background:#11151b; border-radius:12px; padding:10mm; margin:10mm auto; }
+  }
 </style>
 </head>
 <body>

@@ -1,20 +1,17 @@
 // app/admin/events/[slug]/page.tsx
 import { prisma } from '@/lib/db';
-import { readAdminSessionFromCookies } from '@/lib/adminAuth';
+import { getAdminSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 import NextDynamic from 'next/dynamic';
+import { resolveBadgeConfig } from '@/lib/badgeConfig';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-// IMPORTANT: this matches YOUR project:
-// client component lives at app/admin/[slug]/AdminDashboardClient.tsx
+// IMPORTANT: client component lives at app/admin/[slug]/AdminDashboardClient.tsx
 const AdminDashboardClient = NextDynamic(
-  () =>
-    import('@/app/admin/[slug]/AdminDashboardClient').then(
-      (m) => m.default
-    ),
+  () => import('@/app/admin/[slug]/AdminDashboardClient').then((m) => m.default),
   { ssr: false }
 );
 
@@ -47,12 +44,7 @@ function getName(meta: any) {
 
 function getRole(meta: any) {
   const m = safeJson(meta);
-  const raw =
-    m.role ||
-    m.badgeRole ||
-    m.ticketType ||
-    m.tier ||
-    '';
+  const raw = m.role || m.badgeRole || m.ticketType || m.tier || '';
   const up = String(raw || '').trim().toUpperCase();
   if (!up) return 'ATTENDEE';
   if (/^vip/.test(up)) return 'VIP';
@@ -62,39 +54,44 @@ function getRole(meta: any) {
   return up;
 }
 
-export default async function AdminEventPage({
-  params,
-}: {
-  params: { slug: string };
-}) {
-  // 1. auth using cookie session
-  const sess = readAdminSessionFromCookies();
-  if (!sess) {
-    redirect(
-      `/login?next=${encodeURIComponent(`/admin/events/${params.slug}`)}`
-    );
+export default async function AdminEventPage({ params }: { params: { slug: string } }) {
+  // 1) auth using signed cookie session
+  const sess = getAdminSession();
+  if (!sess) redirect(`/login?next=${encodeURIComponent(`/admin/events/${params.slug}`)}`);
+
+  const isSuper = sess.role === 'superadmin';
+
+  if (!isSuper && !sess.oid) {
+    redirect(`/login?next=${encodeURIComponent(`/admin/events/${params.slug}`)}`);
   }
 
-  // 2. fetch event core info
-  const event = await prisma.event.findUnique({
-    where: { slug: params.slug },
+  // 2) fetch event core info (tenant-scoped) + organizer brand for badge config
+  const event = await prisma.event.findFirst({
+    where: isSuper ? { slug: params.slug } : { slug: params.slug, organizerId: sess.oid! },
     select: {
       id: true,
       slug: true,
       title: true,
       capacity: true,
+      organizerId: true,
+      organizer: { select: { brand: true } }, // ✅ needed for badge config
     },
   });
 
   if (!event) {
-    return (
-      <div className="min-h-screen p-6 text-white bg-black">
-        Event not found.
-      </div>
-    );
+    return <div className="min-h-screen p-6 text-white bg-black">Event not found.</div>;
   }
 
-  // 3. registrations table data
+  // ✅ Resolve "effective" event badge config (default + per-event override)
+  const badgeConfig = resolveBadgeConfig({
+    organizerBrand: event.organizer?.brand,
+    eventSlug: event.slug,
+    requestBadgeOverride: null,
+  });
+
+  const badgeStudioUrl = `/admin/events/${encodeURIComponent(event.slug)}#badge-studio`;
+
+  // 3) registrations table data
   const regsDb = await prisma.registration.findMany({
     where: { eventId: event.id },
     orderBy: [{ registeredAt: 'desc' }],
@@ -117,29 +114,19 @@ export default async function AdminEventPage({
     registeredAt: r.registeredAt.toISOString(),
     scannedAt: r.scannedAt ? r.scannedAt.toISOString() : null,
     scannedBy: r.scannedBy ?? null,
-    checkedOutAt: r.checkedOutAt
-      ? r.checkedOutAt.toISOString()
-      : null,
+    checkedOutAt: r.checkedOutAt ? r.checkedOutAt.toISOString() : null,
     checkedOutBy: r.checkedOutBy ?? null,
     qrToken: r.qrToken,
     meta: r.meta,
   }));
 
-  // 4. KPI stats for cards
+  // 4) KPI stats for cards
   const [total, attendedCount] = await Promise.all([
-    prisma.registration.count({
-      where: { eventId: event.id },
-    }),
-    prisma.registration.count({
-      where: { eventId: event.id, attended: true },
-    }),
+    prisma.registration.count({ where: { eventId: event.id } }),
+    prisma.registration.count({ where: { eventId: event.id, attended: true } }),
   ]);
 
-  // 5. last 10 attendance events (scan IN / scan OUT ticker)
-  // Based on schema.AttendanceEvent:
-  // - action: "IN" | "OUT" | "DENY"
-  // - stationLabel: e.g. "VIP Entrance"
-  // - at: timestamp
+  // 5) last 10 attendance events (scan IN / scan OUT ticker)
   const last10 = await prisma.attendanceEvent.findMany({
     where: { eventId: event.id },
     orderBy: [{ at: 'desc' }],
@@ -148,41 +135,34 @@ export default async function AdminEventPage({
       action: true,
       stationLabel: true,
       at: true,
-      registration: {
-        select: {
-          meta: true,
-        },
-      },
+      registration: { select: { meta: true } },
     },
   });
 
-  const recentEvents = last10.map((row: { registration: { meta: any; }; at: { toISOString: () => any; }; action: any; stationLabel: any; }) => {
+  const recentEvents = last10.map((row) => {
     const meta = row.registration?.meta;
     return {
-      ts: row.at.toISOString(),            // when it happened
-      action: row.action,                  // "IN" | "OUT" | "DENY"
-      station: row.stationLabel || '',     // door label
-      name: getName(meta),                 // attendee name
-      role: getRole(meta),                 // VIP / STAFF / etc
+      ts: row.at.toISOString(),
+      action: row.action,
+      station: row.stationLabel || '',
+      name: getName(meta),
+      role: getRole(meta),
     };
   });
 
-  // 6. capacity goes to dashboard for the "capacity thermometer"
   const capacity = event.capacity ?? null;
 
-  // 7. Render the client dashboard shell
   return (
     <AdminDashboardClient
       slug={event.slug}
       title={event.title}
-      attendance={{
-        total,
-        attended: attendedCount,
-        noShows: Math.max(0, total - attendedCount),
-      }}
+      attendance={{ total, attended: attendedCount, noShows: Math.max(0, total - attendedCount) }}
       initialRegistrations={initialRegistrations}
       recentEvents={recentEvents}
       capacity={capacity}
+      // ✅ NEW
+      badgeConfig={badgeConfig}
+      badgeStudioUrl={badgeStudioUrl}
     />
   );
 }

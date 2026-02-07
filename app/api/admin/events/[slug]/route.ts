@@ -2,42 +2,11 @@
 // app/api/admin/events/[slug]/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { cookies } from 'next/headers';
+import { resolveEventScope } from '@/lib/resolveEventScope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// ────────────────────────────────────────────────────────────
-// Gate: accept organizer apiKey OR ADMIN_KEY
-// Sources (in order): header x-api-key, Bearer token, cookie "admin_key", ?key=
-// ────────────────────────────────────────────────────────────
-async function gate(req: Request, slug: string) {
-  const headerKey = (req.headers.get('x-api-key') ?? '').trim();
-  const bearer = (req.headers.get('authorization') ?? '')
-    .replace(/^Bearer\s+/i, '')
-    .trim();
-  const cookieKey = (cookies().get('admin_key')?.value ?? '').trim();
-  const urlKey = new URL(req.url).searchParams.get('key')?.trim() ?? '';
-
-  const provided = headerKey || bearer || cookieKey || urlKey;
-  const admin = (process.env.ADMIN_KEY || process.env.NEXT_PUBLIC_ADMIN_KEY || '').trim();
-
-  const event = await prisma.event.findUnique({
-    where: { slug },
-    select: { id: true, organizer: { select: { apiKey: true } } },
-  });
-  if (!event) return { ok: false as const, status: 404, error: 'Event not found' };
-
-  const orgKey = event.organizer?.apiKey?.trim() || '';
-  if (!provided || (provided !== admin && provided !== orgKey)) {
-    return { ok: false as const, status: 401, error: 'Unauthorized' };
-  }
-  return { ok: true as const, eventId: event.id };
-}
-
-// ────────────────────────────────────────────────────────────
-// Helpers: coerce body → update data, and perform update
-// ────────────────────────────────────────────────────────────
 function coerceUpdate(raw: any):
   | { ok: true; data: Record<string, any> }
   | { ok: false; error: string } {
@@ -60,16 +29,19 @@ function coerceUpdate(raw: any):
   if (typeof raw.description === 'string') data.description = raw.description;
   if (typeof raw.status === 'string') data.status = raw.status;
 
+  // hard block organizerId changes from this endpoint (multi-tenant safety)
+  if ('organizerId' in raw) return { ok: false, error: 'Cannot change organizerId' };
+
   return { ok: true, data };
 }
 
-async function doUpdate(slug: string, data: Record<string, any>) {
+async function doUpdateById(eventId: string, data: Record<string, any>) {
   if (!Object.keys(data).length) {
     return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
   }
   try {
     const updated = await prisma.event.update({
-      where: { slug },
+      where: { id: eventId },
       data,
       select: {
         id: true, slug: true, title: true, date: true,
@@ -86,22 +58,17 @@ async function doUpdate(slug: string, data: Record<string, any>) {
   }
 }
 
-// ────────────────────────────────────────────────────────────
-// GET /api/admin/events/[slug]
-//  - Also supports GET + ?_method=DELETE (delegates to DELETE)
-// ────────────────────────────────────────────────────────────
 export async function GET(req: Request, ctx: { params: { slug: string } }) {
+  // keep your method override compatibility
   const url = new URL(req.url);
   const override = (url.searchParams.get('_method') || '').toUpperCase();
-  if (override === 'DELETE') {
-    return DELETE(req, ctx); // gate enforced in DELETE
-  }
+  if (override === 'DELETE') return DELETE(req, ctx);
 
-  const g = await gate(req, ctx.params.slug);
-  if (!g.ok) return NextResponse.json({ error: g.error }, { status: g.status });
+  const scope = await resolveEventScope(req, ctx.params.slug);
+  if (!scope.ok) return NextResponse.json({ error: scope.error }, { status: scope.status });
 
   const event = await prisma.event.findUnique({
-    where: { slug: ctx.params.slug },
+    where: { id: scope.eventId },
     include: { organizer: { select: { id: true, name: true, email: true } } },
   });
   if (!event) return NextResponse.json({ error: 'Event not found' }, { status: 404 });
@@ -109,24 +76,17 @@ export async function GET(req: Request, ctx: { params: { slug: string } }) {
   return NextResponse.json({ ok: true, event });
 }
 
-// PATCH /api/admin/events/[slug]
 export async function PATCH(req: Request, { params }: { params: { slug: string } }) {
-  const g = await gate(req, params.slug);
-  if (!g.ok) return NextResponse.json({ error: g.error }, { status: g.status });
+  const scope = await resolveEventScope(req, params.slug);
+  if (!scope.ok) return NextResponse.json({ error: scope.error }, { status: scope.status });
 
   const body = await req.json().catch(() => ({}));
   const parsed = coerceUpdate(body);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  return doUpdate(params.slug, parsed.data);
+  return doUpdateById(scope.eventId, parsed.data);
 }
 
-// ────────────────────────────────────────────────────────────
-// POST (default to PATCH) + method-override for forms
-//  - Header: X-HTTP-Method-Override: PATCH|DELETE
-//  - Query : ?_method=PATCH|DELETE
-//  - No override → treat as PATCH (so plain POST works)
-// ────────────────────────────────────────────────────────────
 export async function POST(req: Request, ctx: { params: { slug: string } }) {
   const url = new URL(req.url);
   const override =
@@ -134,45 +94,39 @@ export async function POST(req: Request, ctx: { params: { slug: string } }) {
       .toString()
       .toUpperCase() || 'PATCH';
 
-  if (override === 'DELETE') {
-    return DELETE(req, ctx);
+  if (override === 'DELETE') return DELETE(req, ctx);
+  if (override !== 'PATCH') return NextResponse.json({ error: 'Method Not Allowed' }, { status: 405 });
+
+  const scope = await resolveEventScope(req, ctx.params.slug);
+  if (!scope.ok) return NextResponse.json({ error: scope.error }, { status: scope.status });
+
+  let body: any = {};
+  const ct = req.headers.get('content-type') || '';
+  if (ct.includes('application/json')) {
+    body = await req.json().catch(() => ({}));
+  } else if (ct.includes('application/x-www-form-urlencoded') || ct.includes('multipart/form-data')) {
+    const fd = await req.formData();
+    body = Object.fromEntries(fd.entries());
   }
 
-  if (override === 'PATCH') {
-    const g = await gate(req, ctx.params.slug);
-    if (!g.ok) return NextResponse.json({ error: g.error }, { status: g.status });
+  const parsed = coerceUpdate(body);
+  if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-    let body: any = {};
-    const ct = req.headers.get('content-type') || '';
-    if (ct.includes('application/json')) {
-      body = await req.json().catch(() => ({}));
-    } else if (ct.includes('application/x-www-form-urlencoded') || ct.includes('multipart/form-data')) {
-      const fd = await req.formData();
-      body = Object.fromEntries(fd.entries());
-    }
-    const parsed = coerceUpdate(body);
-    if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
-
-    return doUpdate(ctx.params.slug, parsed.data);
-  }
-
-  return NextResponse.json({ error: 'Method Not Allowed' }, { status: 405 });
+  return doUpdateById(scope.eventId, parsed.data);
 }
 
-// DELETE /api/admin/events/[slug]
 export async function DELETE(req: Request, { params }: { params: { slug: string } }) {
-  const g = await gate(req, params.slug);
-  if (!g.ok) return NextResponse.json({ error: g.error }, { status: g.status });
+  const scope = await resolveEventScope(req, params.slug);
+  if (!scope.ok) return NextResponse.json({ error: scope.error }, { status: scope.status });
 
   try {
-    await prisma.event.delete({ where: { slug: params.slug } });
+    await prisma.event.delete({ where: { id: scope.eventId } });
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }
 
-// Preflight
 export function OPTIONS() {
   return new Response(null, { status: 204 });
 }

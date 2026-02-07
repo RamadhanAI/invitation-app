@@ -1,5 +1,4 @@
 // components/EventDetails.tsx
-// components/EventDetails.tsx
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -7,7 +6,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 type EventDetailsResponse = {
   title: string;
   date?: string | null;
-  price?: number;           // cents
+  price?: number; // cents
   currency?: string | null;
   venue?: string | null;
   capacity?: number | null;
@@ -35,7 +34,8 @@ function formatDate(iso?: string | null) {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleString();
+  // keep consistent with your Dubai context
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Dubai' }).format(d);
 }
 
 function timeUntil(iso?: string | null) {
@@ -69,7 +69,9 @@ export default function EventDetails({ slug, refreshMs = 60_000, className = '' 
   const [event, setEvent] = useState<EventDetailsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
   const abortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
   const priceText = useMemo(
     () => formatPrice(event?.price ?? 0, (event?.currency ?? 'USD') || 'USD'),
@@ -79,7 +81,6 @@ export default function EventDetails({ slug, refreshMs = 60_000, className = '' 
   const countdown = useMemo(() => timeUntil(event?.date), [event?.date]);
 
   async function load() {
-    // cancel any in-flight request first
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -89,35 +90,48 @@ export default function EventDetails({ slug, refreshMs = 60_000, className = '' 
 
     try {
       const data = await fetchDetails(slug, ac.signal);
+      if (!mountedRef.current) return;
       setEvent(data);
     } catch (e: any) {
-      // Ignore expected aborts from HMR/refresh/SW swaps
       if (e?.name === 'AbortError' || String(e).includes('aborted')) return;
 
-      // One gentle retry after a short delay (e.g., pool waking up)
+      // gentle retry (pool waking up, cold start, etc.)
       setTimeout(async () => {
         try {
           const data = await fetchDetails(slug);
+          if (!mountedRef.current) return;
           setEvent(data);
           setError(null);
         } catch (err: any) {
+          if (!mountedRef.current) return;
           setError(err?.message || 'Could not load event');
           setEvent(null);
         } finally {
-          setLoading(false);
+          if (mountedRef.current) setLoading(false);
         }
       }, 400);
+
       return;
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }
 
   useEffect(() => {
+    mountedRef.current = true;
     void load();
-    if (!refreshMs) return;
+
+    if (!refreshMs) {
+      return () => {
+        mountedRef.current = false;
+        abortRef.current?.abort();
+      };
+    }
+
     const id = setInterval(() => void load(), refreshMs);
+
     return () => {
+      mountedRef.current = false;
       clearInterval(id);
       abortRef.current?.abort();
     };
@@ -139,9 +153,7 @@ export default function EventDetails({ slug, refreshMs = 60_000, className = '' 
   if (error || !event) {
     return (
       <div className={`glass rounded-2xl p-4 md:p-5 ${className}`}>
-        <div className="text-sm text-red-300">
-          Failed to load event. {error ? `(${error})` : ''}
-        </div>
+        <div className="text-sm text-red-300">Failed to load event. {error ? `(${error})` : ''}</div>
       </div>
     );
   }
@@ -151,10 +163,7 @@ export default function EventDetails({ slug, refreshMs = 60_000, className = '' 
       <div className="flex flex-col gap-3 md:gap-4">
         <div className="flex items-start justify-between gap-3">
           <h1 className="text-2xl font-bold tracking-tight md:text-3xl">{event.title}</h1>
-          <div
-            className={`badge ${event.price ? '' : 'bg-emerald-600/20 text-emerald-300'}`}
-            title={event.price ? 'Paid event' : 'Free entry'}
-          >
+          <div className={`badge ${event.price ? '' : 'bg-emerald-600/20 text-emerald-300'}`} title={event.price ? 'Paid event' : 'Free entry'}>
             {priceText}
           </div>
         </div>
@@ -163,9 +172,7 @@ export default function EventDetails({ slug, refreshMs = 60_000, className = '' 
           {when && <span>{when}</span>}
           {event.venue && <span>· {event.venue}</span>}
           {typeof event.capacity === 'number' && <span>· Capacity {event.capacity}</span>}
-          {countdown && countdown !== 'Live or ended' && (
-            <span className="badge">Starts in {countdown}</span>
-          )}
+          {countdown && countdown !== 'Live or ended' && <span className="badge">Starts in {countdown}</span>}
           {event.status && <span className="badge">{event.status}</span>}
         </div>
       </div>

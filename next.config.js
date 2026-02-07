@@ -1,9 +1,12 @@
 // next.config.js
+// next.config.js
 /* eslint-disable @typescript-eslint/no-var-requires */
 const isDev = process.env.NODE_ENV !== 'production';
 
 const devCsp = [
   "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
   "script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' 'unsafe-inline'",
   "worker-src 'self' blob:",
   "child-src blob:",
@@ -16,6 +19,8 @@ const devCsp = [
 
 const prodCsp = [
   "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
   "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'",
   "worker-src 'self' blob:",
   "child-src blob:",
@@ -36,9 +41,9 @@ const nextConfig = {
     serverComponentsExternalPackages: ['resend'],
   },
 
-  // Make Vercel builds resilient while we iterate.
-  eslint: { ignoreDuringBuilds: true },
-  typescript: { ignoreBuildErrors: true },
+  // Dev stays resilient; prod becomes strict (Vercel hosting-safe).
+  eslint: { ignoreDuringBuilds: isDev },
+  typescript: { ignoreBuildErrors: isDev },
 
   webpack(config, { isServer }) {
     if (isServer) {

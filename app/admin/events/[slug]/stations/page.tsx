@@ -4,7 +4,7 @@
 import dynamicImport from 'next/dynamic';
 import { prisma } from '@/lib/db';
 import { notFound, redirect } from 'next/navigation';
-import { readAdminSessionFromCookies } from '@/lib/adminSession';
+import { getAdminSession } from '@/lib/session';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,21 +22,22 @@ export default async function StationsPage({
 }: {
   params: { slug: string };
 }) {
-  // 1. Server-side auth gate.
-  // readAdminSessionFromCookies() checks the inv_admin cookie signed with SESSION_SECRET.
-  // If invalid/missing, we don't even render the page; we bounce to /login.
-  const sess = readAdminSessionFromCookies();
-  if (!sess.ok) {
-    redirect(
-      `/login?next=${encodeURIComponent(
-        `/admin/events/${params.slug}/stations`
-      )}`
-    );
+  // 1) Server-side auth gate.
+  const sess = await getAdminSession();
+  if (!sess) {
+    redirect(`/login?next=${encodeURIComponent(`/admin/events/${params.slug}/stations`)}`);
+  }
+  const isSuper = sess.role === 'superadmin';
+  if (!isSuper && !sess.oid) {
+    redirect('/login');
   }
 
   // 2. Load event info for header (and to 404 if slug is bad instead of rendering a broken page)
-  const event = await prisma.event.findUnique({
-    where: { slug: params.slug },
+  const event = await prisma.event.findFirst({
+    where: {
+      slug: params.slug,
+      ...(isSuper ? {} : { organizerId: sess.oid! }),
+    },
     select: { id: true, title: true },
   });
 

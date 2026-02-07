@@ -51,40 +51,37 @@ type BuildArgs = {
   meta: Record<string, any>;
   appUrl?: string;
 
-  // New, optional rich-image fields (passed by lib/email.ts)
-  frontPngUrl?: string; // preferred (contains attendee details)
-  backPngUrl?: string;  // optional (sponsor side, if you want to show it)
-  printUrl?: string;    // /t/[token]/print
+  frontPngUrl?: string;
+  backPngUrl?: string;
+  printUrl?: string;
 
-  // Fallback QR (always provided)
   qrDataUrl: string;
 };
 
-/**
- * buildBadgeHTML
- * Cinematic black/gold email. Prefers front PNG (with attendee details).
- * Falls back to QR + text if images are blocked.
- */
 export function buildBadgeHTML(args: BuildArgs) {
   const { brand, event, token, meta, qrDataUrl } = args;
 
-  const primary   = brand.primary   ?? '#ffffff';
+  const primary = brand.primary ?? '#ffffff';
   const secondary = brand.secondary ?? 'rgba(255,255,255,.7)';
-  const buttonBg  = brand.button    ?? 'linear-gradient(90deg,#FFE58A,#D4AF37 50%,#8B6B16)';
-  const nowYear   = new Date().getFullYear();
+  const buttonBg = brand.button ?? 'linear-gradient(90deg,#FFE58A,#D4AF37 50%,#8B6B16)';
+  const nowYear = new Date().getFullYear();
 
-  const fullName = (meta.fullName ||
-    [meta.firstName, meta.lastName].filter(Boolean).join(' ')).trim() || 'Guest';
+  const fullName =
+    (meta.fullName || [meta.firstName, meta.lastName].filter(Boolean).join(' ')).trim() || 'Guest';
   const jobTitle = (meta.jobTitle || '').toString().trim();
-  const company  = (meta.companyName || meta.company || '').toString().trim();
-  const role     = normalizeRole(meta.role);
+  const company = (meta.companyName || meta.company || '').toString().trim();
+  const role = normalizeRole(meta.role);
 
   const hasPrice = !!event.price && event.price !== 0;
   const priceText = hasPrice ? formatCents(event.price, event.currency) : 'FREE';
 
   const dateLine = event.date
     ? new Date(event.date as any).toLocaleString(undefined, {
-        year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
       })
     : '';
   const venueLine = event.venue ? ` · ${event.venue}` : '';
@@ -93,8 +90,6 @@ export function buildBadgeHTML(args: BuildArgs) {
   const ticketUrl = args.printUrl || `${baseUrl}/t/${encodeURIComponent(token)}/print`;
   const shortRef = token.length > 14 ? `${token.slice(0, 6)}…${token.slice(-4)}` : token;
 
-  // Prefer rich front PNG (has attendee details). Email clients that block remote images
-  // will still show the textual fallback (name/job/company + QR) below.
   const frontImageBlock = args.frontPngUrl
     ? `
       <div style="border:1px solid #eee;border-radius:10px;overflow:hidden;margin:12px 0;">
@@ -104,7 +99,6 @@ export function buildBadgeHTML(args: BuildArgs) {
     `
     : '';
 
-  // Optional: show back image (sponsor side) if provided
   const backImageBlock = args.backPngUrl
     ? `
       <div style="margin-top:8px;font-size:12px;color:#9aa3af">Back side</div>
@@ -131,7 +125,6 @@ export function buildBadgeHTML(args: BuildArgs) {
                  radial-gradient(circle at 80% 120%,rgba(212,175,55,.08) 0%,rgba(0,0,0,0) 70%);
                overflow:hidden;">
 
-        <!-- HEADER -->
         <tr>
           <td style="padding:20px 24px;border-bottom:1px solid rgba(212,175,55,.25);">
             <table role="presentation" width="100%" style="width:100%;">
@@ -142,7 +135,7 @@ export function buildBadgeHTML(args: BuildArgs) {
                     background:linear-gradient(135deg,#FFE58A 0%,#D4AF37 40%,#8B6B16 100%);
                     border-radius:6px;box-shadow:0 12px 30px rgba(212,175,55,.45);
                     padding:6px 10px;text-shadow:0 1px 0 rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.4);">
-                    ${escapeHtml(brand.emailFromName || 'Demo Events')}
+                    ${escapeHtml(brand.emailFromName || 'AurumPass')}
                   </div>
                 </td>
                 <td style="vertical-align:top;text-align:right;">
@@ -158,7 +151,6 @@ export function buildBadgeHTML(args: BuildArgs) {
           </td>
         </tr>
 
-        <!-- EVENT META -->
         <tr>
           <td style="padding:20px 24px 0 24px;">
             <div style="font-size:20px;line-height:28px;font-weight:600;color:${primary};margin:0 0 4px 0;">
@@ -177,14 +169,12 @@ export function buildBadgeHTML(args: BuildArgs) {
           </td>
         </tr>
 
-        <!-- PREFERRED: FRONT PNG WITH ATTENDEE DETAILS -->
         <tr>
           <td style="padding:12px 24px 0 24px;">
             ${frontImageBlock}
           </td>
         </tr>
 
-        <!-- FALLBACK: QR + TEXT (visible even if images blocked) -->
         <tr>
           <td style="padding:0 24px 0 24px;">
             <table role="presentation" width="100%" style="
@@ -231,8 +221,12 @@ export function buildBadgeHTML(args: BuildArgs) {
                         <div style="font-weight:700;font-size:14px;line-height:20px;color:#fff;">
                           ${escapeHtml(fullName)}
                         </div>
-                        ${ jobTitle ? `<div style="color:#9CA3AF;font-size:13px;font-weight:500;line-height:18px;">${escapeHtml(jobTitle)}</div>` : '' }
-                        ${ company  ? `<div style="color:#E5E7EB;font-size:12px;font-weight:600;line-height:16px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.03em;">${escapeHtml(company)}</div>` : '<div style="height:8px;"></div>' }
+                        ${jobTitle ? `<div style="color:#9CA3AF;font-size:13px;font-weight:500;line-height:18px;">${escapeHtml(jobTitle)}</div>` : ''}
+                        ${
+                          company
+                            ? `<div style="color:#E5E7EB;font-size:12px;font-weight:600;line-height:16px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.03em;">${escapeHtml(company)}</div>`
+                            : '<div style="height:8px;"></div>'
+                        }
 
                         <div style="font-size:11px;line-height:16px;color:#D1D5DB;word-break:break-word;max-width:220px;">
                           <strong style="color:#fff;">Important:</strong>
@@ -265,10 +259,9 @@ export function buildBadgeHTML(args: BuildArgs) {
 
         ${backImageBlock}
 
-        <!-- FOOTER -->
         <tr>
           <td style="padding:16px 24px 24px 24px;font-size:11px;line-height:16px;color:${secondary};text-align:center;border-top:1px solid rgba(212,175,55,.25);">
-            © ${nowYear} ${escapeHtml(brand.emailFromName || 'Demo Events')}. All rights reserved.
+            © ${nowYear} ${escapeHtml(brand.emailFromName || 'AurumPass')}. All rights reserved.
           </td>
         </tr>
       </table>

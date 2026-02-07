@@ -1,4 +1,5 @@
 // app/api/scanner/session/route.ts
+// app/api/scanner/session/route.ts
 export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
@@ -16,33 +17,61 @@ export async function GET() {
 
   const station = await prisma.station.findUnique({
     where: { id: sess.stationId },
-    select: { id: true, name: true, active: true, eventId: true, event: { select: { slug: true, title: true } } },
+    select: {
+      id: true,
+      name: true,
+      active: true,
+      eventId: true,
+      event: { select: { slug: true, title: true } },
+    },
   });
-  if (!station || !station.active) return NextResponse.json({ ok: false }, { status: 401 });
+
+  if (!station || !station.active) {
+    return NextResponse.json({ ok: false }, { status: 401 });
+  }
 
   return NextResponse.json({
     ok: true,
-    station: { id: station.id, name: station.name, eventId: station.eventId, eventSlug: station.event.slug, eventTitle: station.event.title },
+    station: {
+      id: station.id,
+      name: station.name,
+      eventId: station.eventId,
+      eventSlug: station.event.slug,
+      eventTitle: station.event.title,
+    },
   });
 }
 
 export async function POST(req: Request) {
   const { eventSlug, code, secret } = await req.json().catch(() => ({}));
-  if (!eventSlug || !code || !secret) return NextResponse.json({ ok: false, error: 'Missing fields' }, { status: 400 });
+  if (!eventSlug || !code || !secret) {
+    return NextResponse.json({ ok: false, error: 'Missing fields' }, { status: 400 });
+  }
 
-  const event = await prisma.event.findUnique({ where: { slug: eventSlug }, select: { id: true } });
+  const event = await prisma.event.findUnique({
+    where: { slug: String(eventSlug) },
+    select: { id: true },
+  });
   if (!event) return NextResponse.json({ ok: false, error: 'Event not found' }, { status: 404 });
 
   const station = await prisma.station.findUnique({
-    where: { station_event_code: { eventId: event.id, code } },
+    where: { station_event_code: { eventId: event.id, code: String(code) } },
     select: { id: true, name: true, active: true, secretHash: true },
   });
-  if (!station || !station.active) return NextResponse.json({ ok: false, error: 'Invalid station or inactive' }, { status: 401 });
+  if (!station || !station.active) {
+    return NextResponse.json({ ok: false, error: 'Invalid station or inactive' }, { status: 401 });
+  }
 
   const ok = await verifySecret(String(secret), station.secretHash);
   if (!ok) return NextResponse.json({ ok: false, error: 'Invalid credentials' }, { status: 401 });
 
-  const value = signSession({ stationId: station.id, eventId: event.id, iat: Date.now() });
+  // ✅ FIX: JWT-style iat in SECONDS (not ms)
+  const value = signSession({
+    stationId: station.id,
+    eventId: event.id,
+    iat: Math.floor(Date.now() / 1000),
+  });
+
   cookies().set({
     name: COOKIE_NAME,
     value,
@@ -53,7 +82,10 @@ export async function POST(req: Request) {
     maxAge: 60 * 60 * 8,
   });
 
-  return NextResponse.json({ ok: true, station: { id: station.id, name: station.name, eventId: event.id, eventSlug } });
+  return NextResponse.json({
+    ok: true,
+    station: { id: station.id, name: station.name, eventId: event.id, eventSlug: String(eventSlug) },
+  });
 }
 
 export async function DELETE() {

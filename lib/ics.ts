@@ -1,5 +1,4 @@
 // lib/ics.ts
-// lib/ics.ts
 type IcsOpts = {
   title: string;
   start: Date;             // event start
@@ -11,7 +10,7 @@ type IcsOpts = {
   organizerEmail?: string; // "mailto:" will be added
   uid?: string;            // if omitted we generate one
   method?: 'PUBLISH' | 'REQUEST'; // PUBLISH = add-to-calendar, REQUEST = meeting invite
-  tzid?: 'UTC' | 'Asia/Dubai';    // default Asia/Dubai for you
+  tzid?: 'UTC' | 'Asia/Dubai';    // default Asia/Dubai
   alarmMinutesBefore?: number;    // default 60
 };
 
@@ -34,7 +33,7 @@ export function buildIcs({
     s.replace(/(.{1,73})(?=.)/g, (m, p1, offset) => (offset + p1.length < s.length ? p1 + '\r\n ' : p1));
 
   const dtstampUtc = toUtcBasic(new Date());
-  const _uid = uid || `${Date.now()}-${Math.random().toString(36).slice(2)}@invitation-app`;
+  const _uid = uid || `${Date.now()}-${Math.random().toString(36).slice(2)}@aurumpass`;
 
   const dtStart = tzid === 'UTC' ? `DTSTART:${toUtcBasic(start)}` : `DTSTART;TZID=${tzid}:${toLocalBasic(start, tzid)}`;
   const _end = end ?? new Date(start.getTime() + 2 * 60 * 60 * 1000);
@@ -43,9 +42,9 @@ export function buildIcs({
   const lines: string[] = [];
   lines.push('BEGIN:VCALENDAR');
   lines.push('VERSION:2.0');
-  lines.push('PRODID:-//Invitation App//EN');
-  lines.push(`METHOD:${method}`); // PUBLISH (info) or REQUEST (invite)
-  if (tzid === 'Asia/Dubai') lines.push(...VTIMEZONE_ASIA_DUBAI); // no DST, safe to embed
+  lines.push('PRODID:-//AurumPass//EN');
+  lines.push(`METHOD:${method}`);
+  if (tzid === 'Asia/Dubai') lines.push(...VTIMEZONE_ASIA_DUBAI);
 
   lines.push('BEGIN:VEVENT');
   lines.push(`UID:${_uid}`);
@@ -57,10 +56,12 @@ export function buildIcs({
   if (description) lines.push(`DESCRIPTION:${escapeIcs(description)}`);
   if (url) lines.push(`URL:${escapeIcs(url)}`);
   lines.push('STATUS:CONFIRMED');
+
   if (organizerEmail) {
     const cn = organizerName ? `;CN=${escapeIcs(organizerName)}` : '';
     lines.push(`ORGANIZER${cn}:mailto:${organizerEmail}`);
   }
+
   if (alarmMinutesBefore > 0) {
     lines.push('BEGIN:VALARM');
     lines.push('ACTION:DISPLAY');
@@ -68,15 +69,16 @@ export function buildIcs({
     lines.push(`TRIGGER:-PT${Math.max(1, Math.floor(alarmMinutesBefore))}M`);
     lines.push('END:VALARM');
   }
+
   lines.push('END:VEVENT');
   lines.push('END:VCALENDAR');
 
-  // fold + CRLF
   return lines.map(fold).join('\r\n') + '\r\n';
 }
 
 // --- helpers ---
 function pad(n: number) { return n < 10 ? `0${n}` : `${n}`; }
+
 function toUtcBasic(d: Date) {
   return (
     d.getUTCFullYear().toString() +
@@ -87,6 +89,7 @@ function toUtcBasic(d: Date) {
     pad(d.getUTCSeconds()) + 'Z'
   );
 }
+
 function toLocalBasic(d: Date, tzid: 'Asia/Dubai' | 'UTC') {
   if (tzid === 'UTC') return toUtcBasic(d).replace(/Z$/, '');
   // Asia/Dubai = UTC+4 fixed (no DST)

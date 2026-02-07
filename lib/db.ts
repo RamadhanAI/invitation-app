@@ -1,19 +1,19 @@
 // lib/db.ts
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 
 // --- Stable Prisma singleton across hot reloads ---
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
-// Dev-friendly logging without spam; enable query logs only if you want.
-const logs: Prisma.LogLevel[] =
-  process.env.NODE_ENV === 'production' ? ['error'] : ['warn', 'error'];
-
-if (process.env.PRISMA_LOG_QUERIES === '1') logs.unshift('query');
+// Dev-friendly logging without spam
+const logs =
+  process.env.NODE_ENV === 'production'
+    ? (['error'] as const)
+    : (['warn', 'error'] as const);
 
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
-    log: logs,
+    log: process.env.PRISMA_LOG_QUERIES === '1' ? (['query', ...logs] as any) : (logs as any),
   });
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;

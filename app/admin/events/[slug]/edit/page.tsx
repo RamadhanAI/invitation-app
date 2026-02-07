@@ -1,6 +1,7 @@
 // app/admin/events/[slug]/edit/page.tsx
 import { prisma } from '@/lib/db';
-import { notFound } from 'next/navigation';
+import { getAdminSession } from '@/lib/session';
+import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
 
 export const runtime = 'nodejs';
@@ -9,8 +10,20 @@ export const dynamic = 'force-dynamic';
 export default async function EditEventPage({
   params,
 }: { params: { slug: string } }) {
-  const event = await prisma.event.findUnique({
-    where: { slug: params.slug },
+  const sess = await getAdminSession();
+  if (!sess) {
+    redirect(`/admin/login?next=${encodeURIComponent(`/admin/events/${params.slug}/edit`)}`);
+  }
+  const isSuper = sess.role === 'super';
+  if (!isSuper && !sess.oid) {
+    redirect('/admin/login');
+  }
+
+  const event = await prisma.event.findFirst({
+    where: {
+      slug: params.slug,
+      ...(isSuper ? {} : { organizerId: sess.oid! }),
+    },
   });
   if (!event) return notFound();
 

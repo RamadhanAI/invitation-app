@@ -7,11 +7,11 @@ import { isLikelyJwt, verifyTicket } from '@/lib/tokens';
 import TicketActions from '@/components/TicketActions';
 import BadgePedestal from '@/components/BadgePedestal';
 import BadgePreviewFlip from '@/components/BadgePreviewFlip';
+import { resolveBadgeConfig, badgeConfigToQuery } from '@/lib/badgeConfig';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// ---------- data helpers ----------
 async function resolveRegistration(token: string) {
   if (isLikelyJwt(token)) {
     const p = await verifyTicket(token);
@@ -19,18 +19,49 @@ async function resolveRegistration(token: string) {
       const reg = await prisma.registration.findUnique({
         where: { id: p.sub },
         select: {
-          id: true, email: true, paid: true, registeredAt: true, qrToken: true, meta: true,
-          event: { select: { title: true, date: true, venue: true, currency: true, price: true, slug: true } },
+          id: true,
+          email: true,
+          paid: true,
+          registeredAt: true,
+          qrToken: true,
+          meta: true,
+          event: {
+            select: {
+              title: true,
+              date: true,
+              venue: true,
+              currency: true,
+              price: true,
+              slug: true,
+              organizer: { select: { brand: true } }, // ✅ NEW
+            },
+          },
         },
       });
       if (reg) return reg;
     }
   }
+
   return prisma.registration.findFirst({
     where: { qrToken: token },
     select: {
-      id: true, email: true, paid: true, registeredAt: true, qrToken: true, meta: true,
-      event: { select: { title: true, date: true, venue: true, currency: true, price: true, slug: true } },
+      id: true,
+      email: true,
+      paid: true,
+      registeredAt: true,
+      qrToken: true,
+      meta: true,
+      event: {
+        select: {
+          title: true,
+          date: true,
+          venue: true,
+          currency: true,
+          price: true,
+          slug: true,
+          organizer: { select: { brand: true } }, // ✅ NEW
+        },
+      },
     },
   });
 }
@@ -41,17 +72,25 @@ function parseMeta(meta: unknown): Record<string, any> {
     if (typeof meta === 'string') return JSON.parse(meta);
     if (typeof meta === 'object' && !Array.isArray(meta)) return meta as Record<string, any>;
     return {};
-  } catch { return {}; }
+  } catch {
+    return {};
+  }
 }
+
 const nameFromMeta = (meta: unknown) => {
   const m = parseMeta(meta);
   const first = (m.firstName ?? m.firstname ?? m.givenName ?? '').toString().trim();
-  const last  = (m.lastName ?? m.lastname ?? m.familyName ?? '').toString().trim();
-  const full  = (m.fullName ?? m.name ?? '').toString().trim();
+  const last = (m.lastName ?? m.lastname ?? m.familyName ?? '').toString().trim();
+  const full = (m.fullName ?? m.name ?? '').toString().trim();
   return (full || `${first} ${last}`.trim()).trim();
 };
-const jobFromMeta = (meta: unknown) => (parseMeta(meta).jobTitle ?? parseMeta(meta).designation ?? parseMeta(meta).title ?? '').toString().trim();
-const companyFromMeta = (meta: unknown) => (parseMeta(meta).companyName ?? parseMeta(meta).company ?? parseMeta(meta).org ?? '').toString().trim();
+
+const jobFromMeta = (meta: unknown) =>
+  (parseMeta(meta).jobTitle ?? parseMeta(meta).designation ?? parseMeta(meta).title ?? '').toString().trim();
+
+const companyFromMeta = (meta: unknown) =>
+  (parseMeta(meta).companyName ?? parseMeta(meta).company ?? parseMeta(meta).org ?? '').toString().trim();
+
 function roleFromMeta(meta: unknown) {
   const m = parseMeta(meta);
   const raw = (m.role ?? m.badgeRole ?? m.ticketType ?? m.tier ?? '').toString().trim();
@@ -64,7 +103,6 @@ function roleFromMeta(meta: unknown) {
   return up;
 }
 
-// ---------- page ----------
 export default async function TicketPage({
   params,
   searchParams,
@@ -75,19 +113,35 @@ export default async function TicketPage({
   const reg = await resolveRegistration(params.token);
   if (!reg) notFound();
 
+  const meta = parseMeta(reg.meta);
+  const event = reg.event!;
+  const organizerBrand = event.organizer?.brand;
+
+  // ✅ effective badge config: organizer default → per-event → meta.badge
+  const resolvedBadge = resolveBadgeConfig({
+    organizerBrand,
+    eventSlug: event.slug,
+    requestBadgeOverride: meta.badge,
+  });
+
   const attendeeName = nameFromMeta(reg.meta) || reg.email;
   const job = jobFromMeta(reg.meta);
   const company = companyFromMeta(reg.meta);
   const roleLabel = roleFromMeta(reg.meta);
 
-  const event = reg.event!;
+  const sponsorLogoUrl =
+    resolvedBadge.sponsorLogoUrl ||
+    (meta.sponsorLogoUrl as string | undefined) ||
+    undefined;
+
   const when = event.date ? new Date(event.date).toLocaleString() : '';
   const status = reg.paid || (event.price ?? 0) === 0 ? 'Paid / Free' : 'Unpaid';
 
-  const pngUrl = `/api/ticket/png?token=${encodeURIComponent(reg.qrToken)}&dpi=300`;
+  // ✅ include badge query so PNG matches preview
+  const badgeQs = badgeConfigToQuery(resolvedBadge); // includes leading &
+  const pngUrl = `/api/ticket/png?token=${encodeURIComponent(reg.qrToken)}&dpi=300${badgeQs}`;
   const printUrl = `/t/${encodeURIComponent(reg.qrToken)}/print`;
 
-  // Badge preview
   if ((searchParams?.view || '').toLowerCase() === 'badge') {
     return (
       <div className="grid p-4 text-white place-items-center">
@@ -103,7 +157,8 @@ export default async function TicketPage({
                 jobTitle={job || ''}
                 companyName={company || ''}
                 role={roleLabel}
-                sponsorLogoUrl={(parseMeta(reg.meta).sponsorLogoUrl as string) || undefined}
+                sponsorLogoUrl={sponsorLogoUrl}
+                badge={resolvedBadge} // ✅ use resolved config
               />
             </BadgePedestal>
           </div>
@@ -116,7 +171,6 @@ export default async function TicketPage({
     );
   }
 
-  // Ticket view
   const dataUrl = await QRCode.toDataURL(reg.qrToken, { margin: 1, scale: 8 });
 
   return (
@@ -128,7 +182,8 @@ export default async function TicketPage({
         </div>
 
         <div className="mt-2 text-sm text-white/70">
-          {when}{event.venue ? ` · ${event.venue}` : ''}
+          {when}
+          {event.venue ? ` · ${event.venue}` : ''}
         </div>
 
         <div className="grid grid-cols-2 gap-4 mt-6">

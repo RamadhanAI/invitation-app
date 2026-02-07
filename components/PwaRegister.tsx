@@ -6,35 +6,35 @@ import { useEffect } from 'react';
 
 export default function PwaRegister() {
   useEffect(() => {
-    // only run in browser and only if SW is supported
-    if (
-      typeof window === 'undefined' ||
-      !('serviceWorker' in navigator)
-    ) {
+    // Only run in browser
+    if (typeof window === 'undefined') return;
+
+    // ✅ In development: unregister any SW + clear caches (prevents stale HTML hydration mismatch)
+    if (process.env.NODE_ENV !== 'production') {
+      (async () => {
+        try {
+          if ('serviceWorker' in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map((r) => r.unregister()));
+          }
+          if ('caches' in window) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map((k) => caches.delete(k)));
+          }
+        } catch {
+          // ignore
+        }
+      })();
       return;
     }
 
-    // basic service worker registration
+    // ✅ Production only: register SW
+    if (!('serviceWorker' in navigator)) return;
+
     const swUrl = '/service-worker.js';
-    navigator.serviceWorker
-      .register(swUrl)
-      .then((reg) => {
-        // optional feedback hooks
-        reg.addEventListener('updatefound', () => {
-          const newSW = reg.installing;
-          if (!newSW) return;
-          newSW.addEventListener(
-            'statechange',
-            () => {
-              // states: installing -> installed -> activating -> activated
-              // we could toast "new version available" here if we want
-            }
-          );
-        });
-      })
-      .catch(() => {
-        // swallow in dev / offline
-      });
+    navigator.serviceWorker.register(swUrl).catch(() => {
+      // swallow
+    });
   }, []);
 
   return null;
